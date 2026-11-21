@@ -1,0 +1,5 @@
+AmbaOS 0.5.0 (x86_64-unknown-none Rust)
+AmbaDE Glass Compositor v0.5 (13 Built-in Apps)
+Browser: AmbaBrowser (HTTPS/HTTP + Wikipedia Search)
+Networking: Intel E1000 + smoltcp 0.12
+Shell: ash (AmbaOS built-in shell)

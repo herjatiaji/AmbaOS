@@ -1,0 +1,8 @@
+AmbaNotes Quick Note
+====================
+You can write, edit, and click [Save (/home/note.txt)]
+to store this note directly into AmbaOS in-memory VFS.
+
+Tips:
+- Try AmbaMedia to listen to synth tracks & view the visualizer!
+- Try AmbaPaint to draw, or AmbaBrowser, AmbaDoom, AmbaClock & AmbaSnake!

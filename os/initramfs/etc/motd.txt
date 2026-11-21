@@ -1,0 +1,10 @@
+Welcome to AmbaOS v0.5.0!
+==========================
+Architecture : x86_64 (64-bit Long Mode)
+Memory       : 2 GiB RAM / 256 MiB Kernel Heap
+Networking   : Intel E1000 + smoltcp TCP/IP (DHCP, ICMP, DNS, HTTP)
+Desktop      : AmbaDE (13 Built-in Apps)
+
+Try networking commands in AmbaTerm:
+  ip | ping 10.0.2.2 | dns example.com | browser
+or open AmbaBrowser (globe icon on the Dock)!

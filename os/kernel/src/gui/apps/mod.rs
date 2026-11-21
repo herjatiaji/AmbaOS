@@ -1,0 +1,14 @@
+pub mod about;
+pub mod calculator;
+pub mod clock;
+pub mod doom;
+pub mod files;
+pub mod media;
+pub mod net;
+pub mod notes;
+pub mod paint;
+pub mod settings;
+pub mod snapshots;
+pub mod snake;
+pub mod sysmon;
+pub mod terminal;

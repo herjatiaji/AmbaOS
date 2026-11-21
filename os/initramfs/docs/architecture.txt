@@ -1,0 +1,16 @@
+AmbaOS v0.5 Kernel Architecture
+================================
+
+1. Memory Subsystem (mm):
+   - PMM: Physical Frame Bitmap Allocator (up to 16 GiB RAM capacity)
+   - VMM: 4-Level Paging reader + Dynamic MMIO page mapper (map_mmio_region)
+   - Heap: Kernel Linked-List Heap Allocator 256 MiB for Rust alloc
+
+2. Network Stack (drivers/pci.rs, drivers/e1000.rs, net/mod.rs):
+   - PCI Config Space scanner -> Intel 82540EM (0x8086:0x100E) E1000 Driver
+   - DMA Ring Buffers (32 RX + 32 TX descriptors @ 2048B)
+   - smoltcp 0.12.0 TCP/IP Stack: DHCPv4, ARP, ICMPv4, DNS, & HTTP/1.1 TCP
+
+3. Desktop & Apps (AmbaDE):
+   - 13 GUI Apps: AmbaTerm, Files, AmbaNotes, AmbaMedia, AmbaPaint,
+     Calculator, AmbaClock, AmbaSnake, AmbaDoom, AmbaBrowser, SysMon, Settings, About.

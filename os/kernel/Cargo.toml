@@ -1,0 +1,36 @@
+[package]
+name = "ambaos-kernel"
+version = "0.5.0"
+edition = "2024"
+
+[[bin]]
+name = "ambaos-kernel"
+test = false
+bench = false
+
+[dependencies]
+limine = "0.5"
+x86_64 = { version = "0.15", default-features = false, features = ["instructions", "abi_x86_interrupt"] }
+spin = "0.9"
+linked_list_allocator = "0.10"
+pic8259 = "0.11"
+font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }
+smoltcp = { version = "0.12.0", default-features = false, features = [
+    "alloc",
+    "medium-ethernet",
+    "proto-ipv4",
+    "proto-dhcpv4",
+    "proto-dns",
+    "socket-icmp",
+    "socket-udp",
+    "socket-tcp",
+    "socket-dhcpv4",
+    "socket-dns",
+] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 2
