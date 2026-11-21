@@ -1,5 +1,15 @@
 # AmbaOS v0.7.0 - Sistem Operasi Bare-Metal Terjomok Se-Kerajaan Ngawi
 
+<p align="center">
+  <img src="os/assets/logo.jpeg" alt="Logo Resmi AmbaOS - Restu Mas Rusdi" width="220" />
+</p>
+
+<p align="center">
+  <strong>Emblem Resmi Kerajaan Ngawi - Ditenagai Ambatron 5000 &amp; Barbershop Mas Rusdi</strong>
+</p>
+
+![Tampilan Desktop AmbaOS v0.7.0 di QEMU](os/assets/ambaos_hero_banner.png)
+
 Selamat datang di **AmbaOS v0.7.0**, sistem operasi `x86_64` murni `#![no_std]` Rust yang ditempa langsung di ruang belakang Barbershop Mas Rusdi dengan restu teknologi Ambatron 5000. Dibangun tanpa numpang kernel Linux ataupun Windows, AmbaOS lahir dari tekad bulat: bikin OS yang tampilannya ganteng, kencang, tahan banting kalau lagi apes, dan tentunya sangar dipakai warga Ngawi buat browsing YouTube sampai mabar Racer3D.
 
 > PERINGATAN WARGA NGAWI: Sistem operasi ini dirancang bebas bloatware, anti blue-screen baperan, dan dilengkapi sabuk pengaman rollback otomatis kalau ada yang iseng ngerusak sistem tengah malam.
@@ -27,6 +37,32 @@ Mas Rusdi pernah bersabda: "OS zaman sekarang kebanyakan drama, update dikit lan
 
 6. **Immutable Core OS & `AmbaSnap` Atomic Rollback (ATA Disk 4 MiB)**
    Partisi inti sistem (`/etc`, `/bin`, `/docs`, `/boot`) digembok ketat dalam mode Read-Only (`CORE [RO]`), terpisah total dari data warga dan aplikasi (`/home/*`, `/apps/*` `USER [RW]`) yang disimpan permanen ke disk ATA `ambaos_state.img`. Setiap perubahan sistem otomatis melahirkan snapshot Copy-on-Write dengan double-buffered superblock `AMBASNP1` (Slot A / Slot B). Kalau sistem corrupt atau gagal boot, cukup tekan tombol atau restart ke **Boot Rollback Menu** dan balik ke masa lalu yang masih suci dalam hitungan detik.
+
+---
+
+## Galeri Meme & Bukti Kesaktian Ambatron 5000
+
+Biar tidak dikira cuma omon-omon belaka di barbershop, berikut bukti otentik keunggulan AmbaOS dibanding OS drama zaman sekarang:
+
+### 1. Standar Kernel Kerajaan Ngawi (Haram vs Restu Mas Rusdi)
+![Meme Drake Standar Kernel Kerajaan Ngawi](os/assets/meme_drake_ngawi.png)
+
+*Context switch kelamaan dan update bikin Blue Screen langsung masuk daftar hitam Kerajaan Ngawi. AmbaOS wajib pakai `io_uring`, SIP `<1 ms`, dan `AmbaSnap` biar hidup tetap tenang.*
+
+### 2. Satpam `CSpace` Zero-Trust vs Game Bajakan Tukang Intip
+![Meme Satpam CSpace vs Malware](os/assets/meme_cspace_vs_maling.png)
+
+*Di OS lain, game bajakan bisa seenaknya nyolong file `/etc` atau token browser. Di AmbaOS, baru mau melirik `FS_WRITE` langsung ditembak laser `PermissionDenied` sama Satpam Mas Rusdi.*
+
+### 3. Breaking News TV Ngawi: Tidak Ada Warga yang Install Ulang Hari Ini
+![Meme Breaking News AmbaSnap Rollback](os/assets/meme_rollback_anti_azab.png)
+
+*User OS lain panik sambil nangis 3 jam kalau file kernel corrupt. Warga Ngawi? Cukup pencet tombol rollback ke Gen #2, 1 detik beres, lanjut ngopi di kursi cukur.*
+
+### 4. Kata Orang OS Bikinan Sendiri Cuma Bisa Layar Hitam?
+![Meme AmbaBrowser YouTube dan Racer3D](os/assets/meme_youtube_racer3d.png)
+
+*Nonton YouTube lewat `AmbaBrowser` (`HTTP/1.1 Keep-Alive` + `ENC:PAL8`) sambil mabar `Racer3D.exe` dan muter video `.ambv` di bare-metal Rust kernel? Ambatron 5000 bilang: "Enteng bos!"*
 
 ---
 
