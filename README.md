@@ -46,6 +46,7 @@ Biar tidak dikira cuma omon-omon belaka di barbershop, berikut jajaran sesepuh d
 
 | Meme Sesepuh | Peran Sakral di Kernel AmbaOS v0.7.0 |
 | :---: | :--- |
+| <img src="amba.webp" alt="Maharaja Amba - Master Segala Sesepuh Ngawi" width="220" /> | **Maharaja Amba (Master Segala Sesepuh & Supreme Ring-0 Overseer)**<br>Tampil rapi pakai jas kebesaran sambil mengawasi seluruh dewan kernel dari takhta Ring-0. Atas izin beliaulah Mas Rusdi, Mas Fuad, Mas Gatot, Si Imut, dan Baginda Yes King bisa akur menjaga 6 paradigma AmbaOS tetap jaya. |
 | <img src="rusdi.jpeg" alt="Mas Rusdi di Barbershop Ngawi" width="220" /> | **Mas Rusdi (Arsitek Kepala Barbershop Ngawi)**<br>Santai sambil pangkas rambut dan mengawal `io_uring` serta `AmbaSnap`: *"Tenang bro, sistem corrupt tinggal `snap rollback`, rambut tetap ganteng, kernel kembali suci dalam 1 detik."* |
 | <img src="mas%20fuad.jpg" alt="Mas Fuad - Muka Muka Jawa" width="220" /> | **Mas Fuad (Satpam `CSpace` Zero-Trust)**<br>Tatapan penuh curiga saat melihat game `.exe` bajakan nekat mengintip folder `/etc` atau nyolong token browser tanpa surat izin capability. Baru melirik langsung kena `PermissionDenied`. |
 | <img src="mas%20gatot.jpeg" alt="Mas Gatot Penjaga Estetika AmbaDE" width="220" /> | **Mas Gatot (Kepala Divisi `AmbaDE` Clean UI)**<br>Penjaga wibawa desktop agar AmbaOS tidak terlihat seperti sekumpulan terminal norak. Memastikan dock, Control Center, `AmbaHub`, dan `AmbaBrowser` tetap kece saat dipamerkan ke warga. |
