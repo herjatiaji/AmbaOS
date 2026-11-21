@@ -40,29 +40,18 @@ Mas Rusdi pernah bersabda: "OS zaman sekarang kebanyakan drama, update dikit lan
 
 ---
 
-## Galeri Meme & Bukti Kesaktian Ambatron 5000
+## Dewan Sesepuh & Meme Resmi Kerajaan Ngawi
 
-Biar tidak dikira cuma omon-omon belaka di barbershop, berikut bukti otentik keunggulan AmbaOS dibanding OS drama zaman sekarang:
+Biar tidak dikira cuma omon-omon belaka di barbershop, berikut jajaran sesepuh dan meme resmi Kerajaan Ngawi yang menjaga kestabilan kernel AmbaOS v0.7.0 siang dan malam:
 
-### 1. Standar Kernel Kerajaan Ngawi (Haram vs Restu Mas Rusdi)
-![Meme Drake Standar Kernel Kerajaan Ngawi](assets/meme_drake_ngawi.png)
-
-*Context switch kelamaan dan update bikin Blue Screen langsung masuk daftar hitam Kerajaan Ngawi. AmbaOS wajib pakai `io_uring`, SIP `<1 ms`, dan `AmbaSnap` biar hidup tetap tenang.*
-
-### 2. Satpam `CSpace` Zero-Trust vs Game Bajakan Tukang Intip
-![Meme Satpam CSpace vs Malware](assets/meme_cspace_vs_maling.png)
-
-*Di OS lain, game bajakan bisa seenaknya nyolong file `/etc` atau token browser. Di AmbaOS, baru mau melirik `FS_WRITE` langsung ditembak laser `PermissionDenied` sama Satpam Mas Rusdi.*
-
-### 3. Breaking News TV Ngawi: Tidak Ada Warga yang Install Ulang Hari Ini
-![Meme Breaking News AmbaSnap Rollback](assets/meme_rollback_anti_azab.png)
-
-*User OS lain panik sambil nangis 3 jam kalau file kernel corrupt. Warga Ngawi? Cukup pencet tombol rollback ke Gen #2, 1 detik beres, lanjut ngopi di kursi cukur.*
-
-### 4. Kata Orang OS Bikinan Sendiri Cuma Bisa Layar Hitam?
-![Meme AmbaBrowser YouTube dan Racer3D](assets/meme_youtube_racer3d.png)
-
-*Nonton YouTube lewat `AmbaBrowser` (`HTTP/1.1 Keep-Alive` + `ENC:PAL8`) sambil mabar `Racer3D.exe` dan muter video `.ambv` di bare-metal Rust kernel? Ambatron 5000 bilang: "Enteng bos!"*
+| Meme Sesepuh | Peran Sakral di Kernel AmbaOS v0.7.0 |
+| :---: | :--- |
+| <img src="../rusdi.jpeg" alt="Mas Rusdi di Barbershop Ngawi" width="220" /> | **Mas Rusdi (Arsitek Kepala Barbershop Ngawi)**<br>Santai sambil pangkas rambut dan mengawal `io_uring` serta `AmbaSnap`: *"Tenang bro, sistem corrupt tinggal `snap rollback`, rambut tetap ganteng, kernel kembali suci dalam 1 detik."* |
+| <img src="../mas%20fuad.jpg" alt="Mas Fuad - Muka Muka Jawa" width="220" /> | **Mas Fuad (Satpam `CSpace` Zero-Trust)**<br>Tatapan penuh curiga saat melihat game `.exe` bajakan nekat mengintip folder `/etc` atau nyolong token browser tanpa surat izin capability. Baru melirik langsung kena `PermissionDenied`. |
+| <img src="../mas%20gatot.jpeg" alt="Mas Gatot Penjaga Estetika AmbaDE" width="220" /> | **Mas Gatot (Kepala Divisi `AmbaDE` Clean UI)**<br>Penjaga wibawa desktop agar AmbaOS tidak terlihat seperti sekumpulan terminal norak. Memastikan dock, Control Center, `AmbaHub`, dan `AmbaBrowser` tetap kece saat dipamerkan ke warga. |
+| <img src="../siimut.jpeg" alt="Si Imut Mode Winning Streak" width="220" /> | **Si Imut Mode Winning Streak (`SIP` Unikernel `<1 ms`)**<br>Aura *Winning Streak* yang bikin micro-unikernel boot di bawah 1 milidetik tanpa `TLB flush`, siap membantai benchmark OS bloatware di medan perang syscall. |
+| <img src="../siimut2.jpeg" alt="Si Imut Mode Pasfoto Suci" width="220" /> | **Si Imut Mode Pasfoto Resmi (`Immutable CORE [RO]`)**<br>Ekspresi polos latar merah persis setelah mesin selesai `AmbaSnap Recovery`. Partisi inti sistem kembali bersih tanpa dosa corrupt dan siap kerja bakti lagi. |
+| <img src="../yesking.jpeg" alt="Baginda Yes King Overclock vNPU" width="220" /> | **Baginda Yes King (Komandan `Boost Mode` & `vNPU`)**<br>Langsung berteriak *"YES KING!"* begitu sakelar `Boost Mode` digeser ke kanan, filter `vNPU HDR` aktif di `AmbaMedia`, dan `Racer3D.exe` ngebut di `AmbaHub`. |
 
 ---
 
