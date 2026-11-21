@@ -3,6 +3,7 @@ pub mod calculator;
 pub mod clock;
 pub mod doom;
 pub mod files;
+pub mod hub;
 pub mod media;
 pub mod net;
 pub mod notes;

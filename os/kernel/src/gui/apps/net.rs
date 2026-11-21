@@ -36,18 +36,18 @@ struct RenderedRow {
 
 const BOOKMARKS: [(&str, &str, i32, i32); 5] = [
     ("Google", "https://www.google.com/?hl=en", 12, 86),
-    ("Wikipedia", "https://en.wikipedia.org/wiki/Operating_system", 104, 108),
-    ("Hacker News", "https://news.ycombinator.com/", 218, 114),
-    ("Rust Lang", "https://www.rust-lang.org/", 338, 102),
-    ("Example.com", "https://example.com/", 446, 112),
+    ("YouTube", "https://www.youtube.com/", 104, 92),
+    ("Wikipedia", "https://en.wikipedia.org/wiki/Operating_system", 202, 108),
+    ("Hacker News", "https://news.ycombinator.com/", 316, 114),
+    ("Rust Lang", "https://www.rust-lang.org/", 436, 102),
 ];
 
 const SPEED_DIAL: [(&str, &str, &str); 6] = [
+    ("YouTube Video", "www.youtube.com", "https://www.youtube.com/"),
     ("Google Search", "www.google.com", "https://www.google.com/?hl=en"),
     ("Wikipedia", "en.wikipedia.org", "https://en.wikipedia.org/wiki/Operating_system"),
     ("Hacker News", "news.ycombinator.com", "https://news.ycombinator.com/"),
     ("Rust Language", "www.rust-lang.org", "https://www.rust-lang.org/"),
-    ("Example Domain", "example.com", "https://example.com/"),
     ("Search: Operating System", "Live Web Search", "operating system"),
 ];
 
@@ -56,6 +56,9 @@ const ROW_H: i32 = 22;
 pub struct NetApp {
     tab: NetTab,
     visual_mode: bool,
+    live_stream: bool,
+    last_stream_ms: u64,
+    progressive_followups: u8,
     omnibox: String,
     url_focused: bool,
     last_synced_url: String,
@@ -73,6 +76,9 @@ impl NetApp {
         Self {
             tab: NetTab::Browser,
             visual_mode: true,
+            live_stream: false,
+            last_stream_ms: 0,
+            progressive_followups: 0,
             omnibox: String::from("amba://home"),
             url_focused: true,
             last_synced_url: String::from("amba://home"),
@@ -84,6 +90,36 @@ impl NetApp {
             last_vw: 818,
             last_vh: 448,
         }
+    }
+
+    pub fn tick(&mut self, now_ms: u64) -> bool {
+        if self.tab != NetTab::Browser || !self.visual_mode {
+            return false;
+        }
+        let state = net::http_state();
+        if state.loading || state.url == "amba://home" {
+            return false;
+        }
+        let (video_on, page_loading) = state
+            .frame
+            .as_ref()
+            .map(|f| (f.video_active, f.page_loading))
+            .unwrap_or((false, false));
+        if self.live_stream || video_on {
+            if now_ms.saturating_sub(self.last_stream_ms) >= 45 {
+                self.last_stream_ms = now_ms;
+                net::start_browser_frame(self.last_vw, self.last_vh);
+                return true;
+            }
+        } else if page_loading && self.progressive_followups < 2 {
+            if now_ms.saturating_sub(self.last_stream_ms) >= 600 {
+                self.last_stream_ms = now_ms;
+                self.progressive_followups += 1;
+                net::start_browser_frame(self.last_vw, self.last_vh);
+                return true;
+            }
+        }
+        false
     }
 
     #[inline]
@@ -124,6 +160,7 @@ impl NetApp {
         self.tab = NetTab::Browser;
         self.omnibox = String::from(trimmed);
         self.scroll_y = 0;
+        self.progressive_followups = 0;
         self.pending_text.clear();
         self.pending_enter = false;
         self.url_focused = trimmed == "amba://home";
@@ -187,6 +224,7 @@ impl NetApp {
     }
 
     fn reload(&mut self) -> bool {
+        self.progressive_followups = 0;
         let state = net::http_state();
         if self.visual_mode && state.url != "amba://home" {
             self.pending_text.clear();
@@ -350,7 +388,7 @@ impl NetApp {
                     }
                     true
                 }
-                KeyEvent::Char(_) => false,
+                _ => false,
             };
         }
 
@@ -416,6 +454,10 @@ impl NetApp {
                     };
                     net::start_browser_navigate_mode(cur, self.visual_mode, vw, vh);
                 }
+                return true;
+            }
+            if (480..=574).contains(&lx) {
+                self.live_stream = !self.live_stream;
                 return true;
             }
         }
@@ -606,6 +648,24 @@ impl NetApp {
             cy + 12,
             if self.visual_mode { "HTML Visual" } else { "Text Reader" },
             if self.visual_mode { theme.accent_sec } else { theme.text_secondary },
+            FontFace::UiBold,
+        );
+
+        let auto_vid = self.live_stream || state.frame.as_ref().map(|f| f.video_active).unwrap_or(false);
+        canvas.fill_rounded_rect(cx + 480, cy + 8, 94, 26, 6, theme.window_surface);
+        canvas.draw_rounded_rect_outline(
+            cx + 480,
+            cy + 8,
+            94,
+            26,
+            6,
+            if auto_vid { theme.term_green } else { theme.border_inactive },
+        );
+        canvas.draw_text_font(
+            cx + 492,
+            cy + 12,
+            if auto_vid { "Live: ON" } else { "Live: OFF" },
+            if auto_vid { theme.term_green } else { theme.text_secondary },
             FontFace::UiBold,
         );
 

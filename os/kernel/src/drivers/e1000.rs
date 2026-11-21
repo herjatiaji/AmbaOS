@@ -45,8 +45,8 @@ const RCTL_SECRC: u32 = 1 << 26;
 const TCTL_EN: u32 = 1 << 1;
 const TCTL_PSP: u32 = 1 << 3;
 
-const RX_DESC_COUNT: usize = 32;
-const TX_DESC_COUNT: usize = 32;
+const RX_DESC_COUNT: usize = 256;
+const TX_DESC_COUNT: usize = 64;
 const PKT_BUF_SIZE: usize = 2048;
 
 #[repr(C, packed)]

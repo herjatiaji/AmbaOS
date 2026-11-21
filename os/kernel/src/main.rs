@@ -27,7 +27,7 @@ use crate::gui::canvas::Canvas;
 use crate::gui::compositor::DesktopCompositor;
 use crate::gui::font::{self, FontFace};
 use crate::mm::{heap, pmm};
-use crate::proc::{caps, compute, sip, task, uring, zerocopy};
+use crate::proc::{caps, compute, loader, sip, task, uring, zerocopy};
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -143,8 +143,9 @@ unsafe extern "C" fn kmain() -> ! {
     uring::init();
     sip::init();
     compute::init();
+    loader::init();
     task::init();
-    serial_println!("[OK] Next-Gen Kernel Engine: io_uring + ZeroCopy + SIP Unikernels + Capabilities + vNPU DAG");
+    serial_println!("[OK] AmbaOS v0.7.0 Kernel Engine: io_uring + ZeroCopy + SIP + Capabilities + PE32+/ELF64 Loader + vNPU DAG");
     x86_64::instructions::interrupts::enable();
 
     gui::boot_menu::run_if_needed(fb, boot_decision);

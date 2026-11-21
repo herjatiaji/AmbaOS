@@ -1,0 +1,6 @@
+kernel/target/
+target/
+scripts/__pycache__/
+*.pyc
+ambaos_state.img
+*.ppm

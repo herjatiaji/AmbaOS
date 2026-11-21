@@ -55,6 +55,28 @@ impl FramebufferInfo {
         }
     }
 
+    pub fn blit_rect(&self, backbuffer: &[u32], x: i32, y: i32, w: i32, h: i32) {
+        if w <= 0 || h <= 0 || backbuffer.len() < self.width * self.height {
+            return;
+        }
+        let x0 = x.max(0) as usize;
+        let y0 = y.max(0) as usize;
+        let x1 = (x + w).min(self.width as i32).max(0) as usize;
+        let y1 = (y + h).min(self.height as i32).max(0) as usize;
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        let count = x1 - x0;
+        let stride_u32 = self.pitch_bytes / 4;
+        unsafe {
+            for py in y0..y1 {
+                let src = backbuffer.as_ptr().add(py * self.width + x0);
+                let dst = self.addr.add(py * stride_u32 + x0);
+                core::ptr::copy_nonoverlapping(src, dst, count);
+            }
+        }
+    }
+
     pub fn fill_solid(&self, rgb: u32) {
         let packed = self.pack_rgb(rgb);
         let stride_u32 = self.pitch_bytes / 4;

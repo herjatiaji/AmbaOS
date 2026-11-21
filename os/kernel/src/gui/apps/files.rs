@@ -6,9 +6,17 @@ use crate::fs::vfs::{self, Partition};
 use crate::gui::canvas::Canvas;
 use crate::gui::font::FontFace;
 use crate::gui::theme::ThemeColors;
+use crate::proc::loader;
+
+#[derive(Clone)]
+pub enum FileAction {
+    None,
+    LaunchBinary(String),
+}
 
 pub struct FileViewerApp {
     selected: usize,
+    scroll_row: usize,
 }
 
 impl FileViewerApp {
@@ -16,22 +24,36 @@ impl FileViewerApp {
         let files = vfs::list_entries();
         let selected = files
             .iter()
-            .position(|(p, _, _)| p == "/etc/motd.txt")
+            .position(|(p, _, _)| p.ends_with(".exe"))
+            .or_else(|| files.iter().position(|(p, _, _)| p == "/etc/motd.txt"))
             .unwrap_or(0);
-        Self { selected }
+        Self {
+            selected,
+            scroll_row: 0,
+        }
     }
 
-    pub fn handle_click(&mut self, local_x: i32, local_y: i32, cw: i32) -> bool {
+    pub fn handle_click(&mut self, local_x: i32, local_y: i32, cw: i32, ch: i32) -> (bool, FileAction) {
         let split_x = (cw * 40) / 100;
         if local_x >= 8 && local_x < split_x && local_y >= 36 {
-            let row = ((local_y - 36) / 26) as usize;
+            let row = self.scroll_row + ((local_y - 36) / 26) as usize;
             let count = vfs::file_count();
             if row < count {
                 self.selected = row;
-                return true;
+                return (true, FileAction::None);
             }
         }
-        false
+        // Check [Run Executable (.exe / .elf)] button in preview pane
+        let rx = split_x + 14;
+        if local_x >= rx && local_x <= rx + 240 && local_y >= ch - 46 && local_y <= ch - 14 {
+            let files = vfs::list_entries();
+            if let Some((path, _, _)) = files.get(self.selected) {
+                if path.ends_with(".exe") || path.ends_with(".elf") || path.ends_with(".ambv") {
+                    return (true, FileAction::LaunchBinary(path.clone()));
+                }
+            }
+        }
+        (false, FileAction::None)
     }
 
     pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32) {
@@ -40,7 +62,6 @@ impl FileViewerApp {
         let files = vfs::list_entries();
         let split_x = (cw * 40) / 100;
 
-        // Top toolbar breadcrumb
         canvas.fill_rect(cx, cy, cw, 30, theme.window_surface);
         canvas.fill_rect(cx, cy + 30, cw, 1, theme.border_inactive);
         let cur = files.get(self.selected);
@@ -58,12 +79,11 @@ impl FileViewerApp {
             FontFace::UiBold,
         );
 
-        // Left sidebar
         canvas.fill_rect(cx, cy + 31, split_x, ch - 31, theme.titlebar_inactive);
         canvas.fill_rect(cx + split_x, cy + 31, 1, ch - 31, theme.border_inactive);
 
         let mut list_y = cy + 38;
-        for (idx, (path, size, part)) in files.iter().enumerate() {
+        for (idx, (path, size, part)) in files.iter().enumerate().skip(self.scroll_row) {
             if list_y + 24 > cy + ch - 4 {
                 break;
             }
@@ -88,13 +108,12 @@ impl FileViewerApp {
             list_y += 26;
         }
 
-        // Right preview area
         let rx = cx + split_x + 14;
         let rw = cw - split_x - 26;
         if let Some((path, size, part)) = files.get(self.selected) {
             let p_desc = match part {
                 Partition::CoreRo => "Immutable Read-Only Core OS",
-                Partition::UserRw => "Persistent Read-Write User Data",
+                Partition::UserRw => "Persistent ATA User Data",
             };
             canvas.draw_text_clipped_font(
                 rx,
@@ -107,16 +126,29 @@ impl FileViewerApp {
             canvas.fill_rect(rx, cy + 60, rw, 1, theme.border_inactive);
 
             if let Some(bytes) = vfs::read_file(path) {
-                let text = core::str::from_utf8(&bytes).unwrap_or("[binary data]");
-                let max_cols = ((rw - 8) / 8).max(16) as usize;
-                let lines = wrap_lines(text, max_cols);
-                let mut ty = cy + 68;
-                for line in lines {
-                    if ty + 18 > cy + ch - 6 {
-                        break;
+                if let Some(hdr) = loader::inspect_binary(&bytes) {
+                    canvas.draw_text_font(rx, cy + 72, &format!("Binary Type : {}", hdr.format.label()), theme.accent, FontFace::UiBold);
+                    canvas.draw_text_clipped_font(rx, cy + 96, rw, &format!("Header Magic: {}", hdr.magic_str), theme.text_primary, FontFace::Mono);
+                    canvas.draw_text_clipped_font(rx, cy + 118, rw, &format!("Subsystem   : {}", hdr.subsystem), theme.term_green, FontFace::Mono);
+                    canvas.draw_text_clipped_font(rx, cy + 140, rw, &format!("Entry RVA   : {:#010x}", hdr.entry_rva), theme.text_secondary, FontFace::Mono);
+                    canvas.draw_text_clipped_font(rx, cy + 162, rw, &format!("ImageBase   : {:#018x}", hdr.image_base), theme.text_secondary, FontFace::Mono);
+                    canvas.draw_text_clipped_font(rx, cy + 184, rw, &format!("Imports     : {}", hdr.imports), theme.accent_sec, FontFace::Mono);
+                    canvas.draw_text_clipped_font(rx, cy + 206, rw, &format!("SIP Target  : {} ({})", hdr.app_id, hdr.version), theme.text_secondary, FontFace::Mono);
+
+                    canvas.fill_rounded_rect(rx, cy + ch - 46, 236, 32, 8, theme.accent);
+                    canvas.draw_text_font(rx + 18, cy + ch - 39, "Run Executable in SIP Sandbox", 0xFFFFFF, FontFace::UiBold);
+                } else {
+                    let text = core::str::from_utf8(&bytes).unwrap_or("[binary data]");
+                    let max_cols = ((rw - 8) / 8).max(16) as usize;
+                    let lines = wrap_lines(text, max_cols);
+                    let mut ty = cy + 68;
+                    for line in lines {
+                        if ty + 18 > cy + ch - 6 {
+                            break;
+                        }
+                        canvas.draw_text_clipped_font(rx, ty, rw, &line, theme.text_secondary, FontFace::Mono);
+                        ty += 19;
                     }
-                    canvas.draw_text_clipped_font(rx, ty, rw, &line, theme.text_secondary, FontFace::Mono);
-                    ty += 19;
                 }
             }
         }

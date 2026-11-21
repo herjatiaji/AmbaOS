@@ -265,7 +265,7 @@ def fetch_url_ambp1(raw_url: str) -> bytes:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=3) as resp:
             status_code = getattr(resp, "status", 200)
             final_url = resp.geturl() or target
             ctype = (resp.headers.get("Content-Type") or "").lower()
@@ -395,6 +395,15 @@ def encode_rle565(rgb_bytes: bytes) -> bytes:
     return bytes(out)
 
 
+def encode_pal8(img: "Image.Image") -> bytes:
+    """Quantize RGB image in C via Pillow FASTOCTREE to 768B palette + W*H index bytes."""
+    q = img.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    pal = list(q.getpalette() or [])[:768]
+    if len(pal) < 768:
+        pal.extend([0] * (768 - len(pal)))
+    return bytes(pal) + q.tobytes()
+
+
 def encode_ambf1(
     status: str,
     url: str,
@@ -405,28 +414,35 @@ def encode_ambf1(
     scroll_h: int,
     input_focused: bool,
     png_b64: str,
+    video_active: bool = False,
+    page_loading: bool = False,
+    fast_stream: bool = False,
 ) -> bytes:
     if Image is None:
         raise RuntimeError("PIL Image module unavailable")
-    png_bytes = base64.b64decode(png_b64)
-    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-    if img.size != (w, h):
-        img = img.resize((w, h), Image.Resampling.BILINEAR)
-    rle = encode_rle565(img.tobytes())
+    img_bytes = base64.b64decode(png_b64)
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    tw, th = (max(160, w // 2), max(100, h // 2)) if fast_stream else (w, h)
+    if img.size != (tw, th):
+        resample = Image.Resampling.NEAREST if fast_stream else Image.Resampling.BILINEAR
+        img = img.resize((tw, th), resample)
+    pal_payload = encode_pal8(img)
     hdr = (
         "AMBF1\n"
         f"STATUS:{to_ascii(status)}\n"
         f"URL:{to_ascii(url)[:240]}\n"
         f"TITLE:{to_ascii(title)[:140]}\n"
-        f"W:{w}\n"
-        f"H:{h}\n"
+        f"W:{tw}\n"
+        f"H:{th}\n"
         f"SCROLLY:{max(0, int(scroll_y))}\n"
         f"SCROLLH:{max(h, int(scroll_h))}\n"
         f"INPUT:{1 if input_focused else 0}\n"
-        "ENC:RLE565\n"
+        f"VIDEO:{1 if video_active else 0}\n"
+        f"LOADING:{1 if page_loading else 0}\n"
+        "ENC:PAL8\n"
         "\n"
     ).encode("ascii", "ignore")
-    return hdr + rle
+    return hdr + pal_payload
 
 
 def _is_wsl() -> bool:
@@ -546,7 +562,14 @@ BRIDGE = VisualBridge()
 class GatewayHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def _visual_response(self, req: dict, w: int, h: int, fallback_url: str | None = None) -> tuple[bytes, str]:
+    def _visual_response(
+        self,
+        req: dict,
+        w: int,
+        h: int,
+        fallback_url: str | None = None,
+        fast_stream: bool = False,
+    ) -> tuple[bytes, str]:
         vw = max(320, min(1200, w)) & ~1
         vh = max(200, min(680, h)) & ~1
         req["w"] = vw
@@ -563,6 +586,9 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     [],
                 )
                 return home_payload, "text/plain; charset=ascii"
+            vid_on = bool(res.get("video_active", False))
+            page_loading = bool(res.get("page_loading", False))
+            use_fast = fast_stream and vid_on
             frame = encode_ambf1(
                 "200 OK",
                 res.get("url") or fallback_url or "https://www.google.com/",
@@ -573,6 +599,9 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 res.get("scroll_h", vh),
                 res.get("input_focused", False),
                 res["png_b64"],
+                video_active=vid_on,
+                page_loading=page_loading,
+                fast_stream=use_fast,
             )
             return frame, "application/octet-stream"
         except Exception as exc:
@@ -596,6 +625,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/render":
             url = params.get("url", [""])[0]
             payload, ctype = self._visual_response({"cmd": "navigate", "url": url}, w, h, fallback_url=url)
+        elif parsed.path == "/frame":
+            payload, ctype = self._visual_response({"cmd": "frame"}, w, h, fast_stream=True)
         elif parsed.path == "/click":
             x = int(params.get("x", ["0"])[0] or "0")
             y = int(params.get("y", ["0"])[0] or "0")
@@ -619,6 +650,34 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         elif parsed.path == "/search":
             q = params.get("q", [""])[0]
             payload = search_wikipedia_ambp1(q)
+        elif parsed.path == "/pkg":
+            pkg_name = (params.get("name", ["racer3d_setup.exe"])[0] or "racer3d_setup.exe").strip()
+            app_id = pkg_name.split("_")[0].split(".")[0].lower() or "app"
+            buf = bytearray(512)
+            if pkg_name.lower().endswith(".elf"):
+                buf[0:4] = b"\x7fELF"
+                buf[4:7] = bytes([2, 1, 1])
+                buf[16:18] = (2).to_bytes(2, "little")
+                buf[18:20] = (0x3E).to_bytes(2, "little")
+                buf[24:32] = (0x401000).to_bytes(8, "little")
+                tag = f"AMBG:{app_id}:{pkg_name}:v1.0.0\x00".encode("ascii", "ignore")
+                buf[0xC0 : 0xC0 + len(tag)] = tag
+            else:
+                buf[0:2] = b"MZ"
+                buf[0x3C:0x40] = (0x80).to_bytes(4, "little")
+                buf[0x80:0x84] = b"PE\x00\x00"
+                buf[0x84:0x86] = (0x8664).to_bytes(2, "little")
+                buf[0x86:0x88] = (3).to_bytes(2, "little")
+                buf[0x94:0x96] = (0x00F0).to_bytes(2, "little")
+                buf[0x96:0x98] = (0x0022).to_bytes(2, "little")
+                buf[0x98:0x9A] = (0x020B).to_bytes(2, "little")
+                buf[0xA8:0xAC] = (0x1000).to_bytes(4, "little")
+                buf[0xB0:0xB8] = (0x140000000).to_bytes(8, "little")
+                buf[0xDC:0xDE] = (2).to_bytes(2, "little")
+                tag = f"AMBG:{app_id}:{pkg_name}:v1.0.0\x00".encode("ascii", "ignore")
+                buf[0x180 : 0x180 + len(tag)] = tag
+            payload = bytes(buf)
+            ctype = "application/octet-stream"
         else:
             payload = format_ambp1(
                 "200 OK",
@@ -627,12 +686,14 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 [("H1", "AmbaOS HTTPS + Chrome Visual Gateway Active", ""), ("P", "Ready on 10.0.2.2:18088", "")],
             )
 
+        self.close_connection = False
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Connection", "close")
+        self.send_header("Connection", "keep-alive")
         self.end_headers()
         self.wfile.write(payload)
+        self.wfile.flush()
 
     def log_message(self, fmt: str, *args: object) -> None:
         pass

@@ -53,12 +53,12 @@ impl Canvas {
             self.buffer[idx] = self.pack((sr << 16) | (sg << 8) | sb);
             return;
         }
-        let a = alpha as u32;
-        let inv = 255 - a;
+        let a = (alpha as u32) + 1;
+        let inv = 256 - a;
         let (dr, dg, db) = self.unpack(self.buffer[idx]);
-        let nr = (sr * a + dr * inv) / 255;
-        let ng = (sg * a + dg * inv) / 255;
-        let nb = (sb * a + db * inv) / 255;
+        let nr = (sr * a + dr * inv) >> 8;
+        let ng = (sg * a + dg * inv) >> 8;
+        let nb = (sb * a + db * inv) >> 8;
         self.buffer[idx] = (nr << self.red_shift) | (ng << self.green_shift) | (nb << self.blue_shift);
     }
 
@@ -98,17 +98,17 @@ impl Canvas {
         let sr = (rgb >> 16) & 0xFF;
         let sg = (rgb >> 8) & 0xFF;
         let sb = rgb & 0xFF;
-        let a = alpha as u32;
-        let inv = 255 - a;
+        let a = (alpha as u32) + 1;
+        let inv = 256 - a;
         let stride = self.width as usize;
         for row in y0..y1 {
             let row_base = (row as usize) * stride;
             for col in x0..x1 {
                 let idx = row_base + (col as usize);
                 let (dr, dg, db) = self.unpack(self.buffer[idx]);
-                let nr = (sr * a + dr * inv) / 255;
-                let ng = (sg * a + dg * inv) / 255;
-                let nb = (sb * a + db * inv) / 255;
+                let nr = (sr * a + dr * inv) >> 8;
+                let ng = (sg * a + dg * inv) >> 8;
+                let nb = (sb * a + db * inv) >> 8;
                 self.buffer[idx] =
                     (nr << self.red_shift) | (ng << self.green_shift) | (nb << self.blue_shift);
             }
@@ -193,24 +193,28 @@ impl Canvas {
         if w <= 0 || h <= 0 || alpha == 0 {
             return;
         }
-        let sr = (rgb >> 16) & 0xFF;
-        let sg = (rgb >> 8) & 0xFF;
-        let sb = rgb & 0xFF;
+        if r <= 0 {
+            self.fill_rect_alpha(x, y, w, h, rgb, alpha);
+            return;
+        }
         let r = r.min(w / 2).min(h / 2);
 
-        for py in 0..h {
-            let gy = y + py;
-            if gy < 0 || gy >= self.height {
-                continue;
+        if h > 2 * r {
+            self.fill_rect_alpha(x, y + r, w, h - 2 * r, rgb, alpha);
+        }
+
+        for py in 0..r {
+            let dy = r - 1 - py;
+            let mut inset = r;
+            for dx in 0..r {
+                if dx * dx + dy * dy <= r * r {
+                    inset = r - 1 - dx;
+                }
             }
-            for px in 0..w {
-                let gx = x + px;
-                if gx < 0 || gx >= self.width {
-                    continue;
-                }
-                if Self::inside_rounded(px, py, w, h, r) {
-                    self.blend_pixel(gx, gy, sr, sg, sb, alpha);
-                }
+            let span_w = w - 2 * inset;
+            if span_w > 0 {
+                self.fill_rect_alpha(x + inset, y + py, span_w, 1, rgb, alpha);
+                self.fill_rect_alpha(x + inset, y + h - 1 - py, span_w, 1, rgb, alpha);
             }
         }
     }
@@ -236,7 +240,9 @@ impl Canvas {
                 self.put_pixel_packed(x, gy, packed);
                 self.put_pixel_packed(x + w - 1, gy, packed);
             } else {
-                for px in 0..w {
+                let left_end = r.min(w);
+                let right_start = (w - r).max(left_end);
+                for px in (0..left_end).chain(right_start..w) {
                     if Self::inside_rounded(px, py, w, h, r) {
                         let on_edge = px == 0
                             || px == w - 1
@@ -255,9 +261,9 @@ impl Canvas {
         }
     }
 
-    pub fn draw_soft_shadow(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32) {
-        self.fill_rounded_rect_alpha(x - 3, y + 6, w + 6, h + 4, r + 2, 0x000000, 38);
-        self.fill_rounded_rect_alpha(x + 2, y + 4, w + 2, h + 2, r + 1, 0x000000, 62);
+    pub fn draw_soft_shadow(&mut self, x: i32, y: i32, w: i32, h: i32, _r: i32) {
+        self.fill_rect_alpha(x + 4, y + h, (w - 2).max(0), 4, 0x000000, 70);
+        self.fill_rect_alpha(x + w, y + 4, 4, (h - 2).max(0), 0x000000, 70);
     }
 
     pub fn fill_circle(&mut self, cx: i32, cy: i32, r: i32, rgb: u32) {
@@ -346,34 +352,46 @@ impl Canvas {
     }
 
     pub fn draw_rgba_sprite(&mut self, x: i32, y: i32, sprite: Sprite, opacity_scale: u8) {
+        self.draw_rgba_slice(x, y, sprite.width, sprite.height, sprite.rgba, opacity_scale);
+    }
+
+    pub fn draw_rgba_slice(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        rgba: &[u8],
+        opacity_scale: u8,
+    ) {
         if opacity_scale == 0 {
             return;
         }
         let scale = opacity_scale as u32;
-        for sy in 0..sprite.height {
+        for sy in 0..height {
             let dy = y + sy;
             if dy < 0 || dy >= self.height {
                 continue;
             }
-            for sx in 0..sprite.width {
+            for sx in 0..width {
                 let dx = x + sx;
                 if dx < 0 || dx >= self.width {
                     continue;
                 }
-                let p = ((sy * sprite.width + sx) as usize) * 4;
-                if p + 3 >= sprite.rgba.len() {
+                let p = ((sy * width + sx) as usize) * 4;
+                if p + 3 >= rgba.len() {
                     continue;
                 }
-                let a = ((sprite.rgba[p + 3] as u32) * scale) / 255;
+                let a = ((rgba[p + 3] as u32) * scale) / 255;
                 if a == 0 {
                     continue;
                 }
                 self.blend_pixel(
                     dx,
                     dy,
-                    sprite.rgba[p] as u32,
-                    sprite.rgba[p + 1] as u32,
-                    sprite.rgba[p + 2] as u32,
+                    rgba[p] as u32,
+                    rgba[p + 1] as u32,
+                    rgba[p + 2] as u32,
                     a as u8,
                 );
             }
@@ -495,8 +513,9 @@ impl Canvas {
         if max_w <= 0 || max_h <= 0 || src_w <= 0 || src_h <= 0 {
             return;
         }
-        let copy_w = max_w.min(src_w);
-        let copy_h = max_h.min(src_h);
+        let scaled = src_w < max_w || src_h < max_h;
+        let copy_w = if scaled { max_w } else { max_w.min(src_w) };
+        let copy_h = if scaled { max_h } else { max_h.min(src_h) };
         let x0 = dst_x.max(0);
         let y0 = dst_y.max(0);
         let x1 = (dst_x + copy_w).min(self.width);
@@ -508,22 +527,39 @@ impl Canvas {
         let dst_stride = self.width as usize;
         let src_stride = src_w as usize;
         let fast_xrgb = self.red_shift == 16 && self.green_shift == 8 && self.blue_shift == 0;
-        let dx_off = (x0 - dst_x) as usize;
-        let count = (x1 - x0) as usize;
 
-        for py in y0..y1 {
-            let sy = (py - dst_y) as usize;
-            let src_start = sy * src_stride + dx_off;
-            if src_start + count > pixels.len() {
-                break;
+        if !scaled {
+            let dx_off = (x0 - dst_x) as usize;
+            let count = (x1 - x0) as usize;
+
+            for py in y0..y1 {
+                let sy = (py - dst_y) as usize;
+                let src_start = sy * src_stride + dx_off;
+                if src_start + count > pixels.len() {
+                    break;
+                }
+                let dst_start = (py as usize) * dst_stride + (x0 as usize);
+                if fast_xrgb {
+                    self.buffer[dst_start..dst_start + count]
+                        .copy_from_slice(&pixels[src_start..src_start + count]);
+                } else {
+                    for i in 0..count {
+                        self.buffer[dst_start + i] = self.pack(pixels[src_start + i]);
+                    }
+                }
             }
-            let dst_start = (py as usize) * dst_stride + (x0 as usize);
-            if fast_xrgb {
-                self.buffer[dst_start..dst_start + count]
-                    .copy_from_slice(&pixels[src_start..src_start + count]);
-            } else {
-                for i in 0..count {
-                    self.buffer[dst_start + i] = self.pack(pixels[src_start + i]);
+        } else {
+            for py in y0..y1 {
+                let sy = (((py - dst_y) * src_h) / max_h).clamp(0, src_h - 1) as usize;
+                let src_row = sy * src_stride;
+                if src_row + src_stride > pixels.len() {
+                    break;
+                }
+                let dst_row = (py as usize) * dst_stride;
+                for px in x0..x1 {
+                    let sx = (((px - dst_x) * src_w) / max_w).clamp(0, src_w - 1) as usize;
+                    let col = pixels[src_row + sx];
+                    self.buffer[dst_row + (px as usize)] = if fast_xrgb { col } else { self.pack(col) };
                 }
             }
         }
@@ -534,8 +570,8 @@ impl Canvas {
 
         // Soft centered ambient radial glow behind logo
         let cx = self.width / 2;
-        let cy = self.height / 2 - 20;
-        let glow_r = 260i32;
+        let cy = self.height / 2 - 22;
+        let glow_r = 250i32;
         let gr = (theme.bg_glow >> 16) & 0xFF;
         let gg = (theme.bg_glow >> 8) & 0xFF;
         let gb = theme.bg_glow & 0xFF;
@@ -554,7 +590,7 @@ impl Canvas {
                 let d2 = dx * dx + dy2;
                 if d2 < max_d2 {
                     let strength = 255 - (d2 * 255) / max_d2;
-                    let alpha = ((strength * strength) / (255 * 255)) * 28;
+                    let alpha = ((strength * strength) / (255 * 255)) * 22;
                     if alpha > 0 {
                         self.blend_pixel(px, py, gr, gg, gb, alpha as u8);
                     }
@@ -562,22 +598,12 @@ impl Canvas {
             }
         }
 
-        // Subtle wallpaper grid dots
-        for gy in (48..self.height).step_by(44) {
-            for gx in (24..self.width).step_by(44) {
-                self.blend_pixel(gx, gy, 255, 255, 255, 16);
-            }
-        }
-
         if show_logo {
             let logo = crate::gui::assets::logo_120();
-            self.draw_rgba_sprite(cx - logo.width / 2, cy - logo.height / 2 - 14, logo, 115);
+            self.draw_rgba_sprite(cx - logo.width / 2, cy - logo.height / 2 - 10, logo, 195);
             let title = "AmbaOS";
             let tw = font::measure_text(FontFace::UiBold, title);
-            self.draw_text_font(cx - tw / 2, cy + 56, title, theme.text_secondary, FontFace::UiBold);
-            let sub = "x86_64 Rust Desktop";
-            let sw = font::measure_text(FontFace::Ui, sub);
-            self.draw_text_font(cx - sw / 2, cy + 74, sub, theme.text_muted, FontFace::Ui);
+            self.draw_text_font(cx - tw / 2, cy + 62, title, 0xD0D7DE, FontFace::UiBold);
         }
     }
 

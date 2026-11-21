@@ -155,6 +155,27 @@ pub fn write_file(path: &str, data: Vec<u8>) -> Result<(), &'static str> {
     Ok(())
 }
 
+pub fn delete_file(path: &str) -> Result<(), &'static str> {
+    let normalized = normalize_path(path);
+    if partition_of(&normalized) == Partition::CoreRo {
+        return Err("Permission denied: Read-Only Immutable Core OS partition");
+    }
+    let removed = {
+        let mut guard = USER_DATA.lock();
+        if let Some(pos) = guard.iter().position(|f| f.path == normalized) {
+            guard.remove(pos);
+            true
+        } else {
+            false
+        }
+    };
+    if !removed {
+        return Err("File not found");
+    }
+    crate::fs::snapshot::sync_user_data();
+    Ok(())
+}
+
 pub fn file_count() -> usize {
     list_entries().len()
 }

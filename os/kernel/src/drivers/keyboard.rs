@@ -22,6 +22,7 @@ pub enum KeyEvent {
     Enter,
     Tab,
     Escape,
+    CtrlSpace,
     Up,
     Down,
     Left,
@@ -158,6 +159,10 @@ fn handle_scancode(sc: u8) {
         0x0F => push_event(KeyEvent::Tab),
         0x1C => push_event(KeyEvent::Enter),
         code if code < 0x80 => {
+            if code == 0x39 && CTRL_DOWN.load(Ordering::Relaxed) {
+                push_event(KeyEvent::CtrlSpace);
+                return;
+            }
             let shift = LEFT_SHIFT.load(Ordering::Relaxed) || RIGHT_SHIFT.load(Ordering::Relaxed);
             let caps = CAPS_LOCK.load(Ordering::Relaxed);
             if let Some(ch) = scancode_to_ascii(code, shift, caps) {

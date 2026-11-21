@@ -27,6 +27,16 @@ if ! python3 -c "import socket; s=socket.socket(); s.settimeout(0.3); s.connect(
     sleep 0.2
 fi
 
+ACCEL_FLAGS=(-accel tcg,thread=multi,tb-size=512 -smp 4)
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+    ACCEL_FLAGS=(-enable-kvm -cpu host -smp 4)
+else
+    echo "[WARN] /dev/kvm not writable (running TCG). Run: sudo usermod -aG kvm \$USER && sudo chmod 666 /dev/kvm"
+fi
+
+RUN_ISO="/tmp/ambaos_run.iso"
+cp -f "$ISO_PATH" "$RUN_ISO"
+
 AUDIO_FLAGS=()
 if [ -S "/mnt/wslg/PulseServer" ]; then
     export PULSE_SERVER="${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}"
@@ -40,6 +50,7 @@ if [ "${1:-}" = "--uefi" ]; then
     [ -f "$OVMF_CODE" ] || OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
     qemu-system-x86_64 \
         -M q35,vmport=on \
+        "${ACCEL_FLAGS[@]}" \
         -m 2G \
         -display gtk,show-cursor=off \
         -device piix3-ide,id=ide0 \
@@ -48,12 +59,13 @@ if [ "${1:-}" = "--uefi" ]; then
         -nic user,model=e1000 \
         "${AUDIO_FLAGS[@]}" \
         -drive if=pflash,unit=0,format=raw,file="$OVMF_CODE",readonly=on \
-        -cdrom "$ISO_PATH" \
+        -cdrom "$RUN_ISO" \
         -boot d \
         -serial stdio
 else
     qemu-system-x86_64 \
         -M q35,vmport=on \
+        "${ACCEL_FLAGS[@]}" \
         -m 2G \
         -display gtk,show-cursor=off \
         -device piix3-ide,id=ide0 \
@@ -61,7 +73,7 @@ else
         -device ide-hd,drive=disk0,bus=ide0.0 \
         -nic user,model=e1000 \
         "${AUDIO_FLAGS[@]}" \
-        -cdrom "$ISO_PATH" \
+        -cdrom "$RUN_ISO" \
         -boot d \
         -serial stdio
 fi

@@ -2,13 +2,14 @@ use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
 use crate::gui::theme::{self, ThemeColors};
 
-pub const TOPBAR_H: i32 = 32;
-pub const DOCK_RESERVE_H: i32 = 76;
-pub const TITLEBAR_H: i32 = 34;
-pub const WIN_RADIUS: i32 = 10;
+pub const TOPBAR_H: i32 = 28;
+pub const DOCK_RESERVE_H: i32 = 104;
+pub const TITLEBAR_H: i32 = 32;
+pub const WIN_RADIUS: i32 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppKind {
+    Hub,
     Terminal,
     Files,
     Notes,
@@ -26,18 +27,19 @@ pub enum AppKind {
 }
 
 impl AppKind {
-    pub const ALL: [AppKind; 14] = [
+    pub const ALL: [AppKind; 15] = [
+        AppKind::Hub,
         AppKind::Terminal,
         AppKind::Files,
-        AppKind::Notes,
         AppKind::Media,
+        AppKind::Net,
+        AppKind::Snapshots,
+        AppKind::Doom,
+        AppKind::Snake,
+        AppKind::Notes,
         AppKind::Paint,
         AppKind::Calculator,
         AppKind::Clock,
-        AppKind::Snake,
-        AppKind::Doom,
-        AppKind::Net,
-        AppKind::Snapshots,
         AppKind::SysMon,
         AppKind::Settings,
         AppKind::About,
@@ -45,6 +47,7 @@ impl AppKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            AppKind::Hub => "AmbaHub",
             AppKind::Terminal => "AmbaTerm",
             AppKind::Files => "Files",
             AppKind::Notes => "AmbaNotes",
@@ -54,7 +57,7 @@ impl AppKind {
             AppKind::Clock => "AmbaClock",
             AppKind::Snake => "AmbaSnake",
             AppKind::Doom => "AmbaDoom",
-            AppKind::Net => "AmbaBrowser",
+            AppKind::Net => "Browser",
             AppKind::Snapshots => "AmbaSnap",
             AppKind::SysMon => "SysMon",
             AppKind::Settings => "Settings",
@@ -64,10 +67,11 @@ impl AppKind {
 
     pub fn subtitle(self) -> &'static str {
         match self {
+            AppKind::Hub => "Games & .exe Store",
             AppKind::Terminal => "ash Command Shell",
-            AppKind::Files => "Core RO / User RW",
+            AppKind::Files => "VFS & PE32+ Inspector",
             AppKind::Notes => "Persistent Editor",
-            AppKind::Media => "Music & Gallery",
+            AppKind::Media => "Video, Music & Gallery",
             AppKind::Paint => "Drawing Studio",
             AppKind::Calculator => "Integer Math",
             AppKind::Clock => "Clock & Stopwatch",
@@ -75,7 +79,7 @@ impl AppKind {
             AppKind::Doom => "3D Raycaster FPS",
             AppKind::Net => "Internet Web Browser",
             AppKind::Snapshots => "Immutable & Rollback",
-            AppKind::SysMon => "RAM & Tasks",
+            AppKind::SysMon => "io_uring, SIP & NPU",
             AppKind::Settings => "Themes & Desktop",
             AppKind::About => "Logo & System Info",
         }
@@ -140,9 +144,9 @@ impl Window {
             self.maximized = false;
         } else {
             self.saved_rect = (self.x, self.y, self.w, self.h);
-            self.x = 12;
+            self.x = 14;
             self.y = TOPBAR_H + 8;
-            self.w = (screen_w - 24).max(320);
+            self.w = (screen_w - 28).max(320);
             self.h = (screen_h - TOPBAR_H - DOCK_RESERVE_H - 12).max(240);
             self.maximized = true;
         }
@@ -155,9 +159,10 @@ impl Window {
         let btn_y_top = self.y + (TITLEBAR_H - 18) / 2;
         let btn_y_bot = btn_y_top + 18;
         if py >= btn_y_top && py <= btn_y_bot {
-            let close_cx = self.x + self.w - 18;
-            let min_cx = self.x + self.w - 38;
-            let max_cx = self.x + self.w - 58;
+            // Left-aligned macOS-style traffic light controls
+            let close_cx = self.x + 18;
+            let min_cx = self.x + 38;
+            let max_cx = self.x + 58;
             if (px - close_cx).abs() <= 9 {
                 return TitleAction::Close;
             }
@@ -168,7 +173,7 @@ impl Window {
                 return TitleAction::MaximizeToggle;
             }
         }
-        if px >= self.x && px < self.x + self.w - 68 {
+        if px >= self.x + 68 && px < self.x + self.w {
             return TitleAction::DragStart;
         }
         TitleAction::None
@@ -180,7 +185,7 @@ impl Window {
     }
 
     pub fn draw_chrome(&self, canvas: &mut Canvas, theme: ThemeColors, focused: bool) {
-        let r = if self.maximized { 4 } else { WIN_RADIUS };
+        let r = if self.maximized { 6 } else { WIN_RADIUS };
         canvas.draw_soft_shadow(self.x, self.y, self.w, self.h, r);
         canvas.fill_rounded_rect(self.x, self.y, self.w, self.h, r, theme.window_bg);
 
@@ -200,28 +205,26 @@ impl Window {
         canvas.fill_rect(self.x + 1, self.y + TITLEBAR_H - 1, self.w - 2, 1, theme.border_inactive);
         canvas.draw_rounded_rect_outline(self.x, self.y, self.w, self.h, r, border);
 
-        let dot_color = if focused { theme.accent } else { theme.text_muted };
-        canvas.fill_circle(self.x + 16, self.y + TITLEBAR_H / 2, 4, dot_color);
+        // macOS Traffic Light Buttons on the Left
+        let cy = self.y + TITLEBAR_H / 2;
+        canvas.fill_circle(self.x + 18, cy, 6, theme::BTN_CLOSE);
+        canvas.fill_circle(self.x + 38, cy, 6, theme::BTN_MIN);
+        canvas.fill_circle(self.x + 58, cy, 6, theme::BTN_MAX);
 
         let title_w = font::measure_text(FontFace::UiBold, self.title);
-        let max_title_w = (self.w - 120).max(40);
+        let max_title_w = (self.w - 148).max(40);
         let title_x = if title_w < max_title_w {
             self.x + (self.w - title_w) / 2
         } else {
-            self.x + 30
+            self.x + 76
         };
         canvas.draw_text_clipped_font(
             title_x,
-            self.y + 8,
+            self.y + 7,
             max_title_w,
             self.title,
             if focused { theme.text_primary } else { theme.text_secondary },
             FontFace::UiBold,
         );
-
-        let cy = self.y + TITLEBAR_H / 2;
-        canvas.fill_circle(self.x + self.w - 58, cy, 6, theme::BTN_MAX);
-        canvas.fill_circle(self.x + self.w - 38, cy, 6, theme::BTN_MIN);
-        canvas.fill_circle(self.x + self.w - 18, cy, 6, theme::BTN_CLOSE);
     }
 }

@@ -191,13 +191,25 @@ class CDPBridge:
         self.events: list[dict] = []
         self.cur_w = 816
         self.cur_h = 448
+        self.frame_counter = 0
+        self.last_meta: dict = {
+            "url": "",
+            "title": "AmbaBrowser",
+            "scroll_y": 0,
+            "scroll_h": self.cur_h,
+            "input_focused": False,
+            "video_active": False,
+            "page_loading": False,
+        }
         self._start_browser()
 
     def _start_browser(self) -> None:
         args = [
             self.exe,
             "--headless=new",
-            "--disable-gpu",
+            "--enable-gpu-rasterization",
+            "--ignore-gpu-blocklist",
+            "--autoplay-policy=no-user-gesture-required",
             "--no-first-run",
             "--no-default-browser-check",
             "--hide-scrollbars",
@@ -205,6 +217,11 @@ class CDPBridge:
             "--disable-background-networking",
             "--disable-sync",
             "--disable-translate",
+            "--disable-extensions",
+            "--disable-component-update",
+            "--disable-default-apps",
+            "--no-pings",
+            "--disable-features=Translate,MediaRouter",
             "--lang=en-US",
             f"--remote-debugging-port={self.port}",
             f"--window-size={self.cur_w},{self.cur_h}",
@@ -307,46 +324,71 @@ class CDPBridge:
                 {"width": vw, "height": vh, "deviceScaleFactor": 1, "mobile": False},
             )
 
-    def eval_js(self, expr: str):
-        res = self.call(
-            "Runtime.evaluate",
-            {"expression": expr, "returnByValue": True},
-        )
-        return res.get("result", {}).get("value")
+    def eval_js(self, expr: str, timeout_s: float = 0.6):
+        try:
+            res = self.call(
+                "Runtime.evaluate",
+                {"expression": expr, "returnByValue": True, "timeout": int(timeout_s * 1000)},
+                timeout=timeout_s + 2.5,
+            )
+            return res.get("result", {}).get("value")
+        except Exception:
+            return None
 
-    def _wait_if_loading(self, max_wait: float = 4.0) -> None:
-        deadline = time.monotonic() + max_wait
-        while time.monotonic() < deadline:
-            try:
-                state = self.eval_js("document.readyState")
-                if state in ("interactive", "complete"):
-                    break
-            except Exception:
-                break
-            time.sleep(0.1)
+    def _history_meta(self) -> tuple[str, str]:
+        try:
+            hist = self.call("Page.getNavigationHistory", timeout=1.0)
+            idx = int(hist.get("currentIndex", 0))
+            entries = hist.get("entries", [])
+            if 0 <= idx < len(entries):
+                return str(entries[idx].get("url", "")), str(entries[idx].get("title", "AmbaBrowser"))
+        except Exception:
+            pass
+        return str(self.last_meta.get("url", "")), str(self.last_meta.get("title", "AmbaBrowser"))
 
-    def capture_state(self, at_start: bool = False) -> dict:
-        meta = self.eval_js(
-            """(() => {
-              const ae = document.activeElement;
-              const inp = !!(ae && (
-                ae.tagName === 'INPUT' ||
-                ae.tagName === 'TEXTAREA' ||
-                ae.isContentEditable
-              ));
-              const root = document.scrollingElement || document.documentElement || document.body;
-              return {
-                url: location.href || '',
-                title: document.title || '',
-                scroll_y: Math.max(0, Math.round(window.scrollY || (root ? root.scrollTop : 0) || 0)),
-                scroll_h: Math.max(1, Math.round((root ? root.scrollHeight : 1) || 1)),
-                input_focused: inp
-              };
-            })()"""
+    def capture_state(self, at_start: bool = False, fast: bool = False) -> dict:
+        self.frame_counter += 1
+        if not fast or (self.frame_counter % 5) == 0:
+            meta = self.eval_js(
+                """(() => {
+                  const ae = document.activeElement;
+                  const inp = !!(ae && (
+                    ae.tagName === 'INPUT' ||
+                    ae.tagName === 'TEXTAREA' ||
+                    ae.isContentEditable
+                  ));
+                  const vids = Array.from(document.querySelectorAll('video'));
+                  const vidPlaying = vids.some(v => !v.paused && !v.ended && v.readyState >= 2 && v.currentTime > 0);
+                  const root = document.scrollingElement || document.documentElement || document.body;
+                  return {
+                    url: location.href || '',
+                    title: document.title || '',
+                    scroll_y: Math.max(0, Math.round(window.scrollY || (root ? root.scrollTop : 0) || 0)),
+                    scroll_h: Math.max(1, Math.round((root ? root.scrollHeight : 1) || 1)),
+                    input_focused: inp,
+                    video_active: vidPlaying,
+                    page_loading: document.readyState !== 'complete'
+                  };
+                })()""",
+                timeout_s=0.30,
+            )
+            if isinstance(meta, dict):
+                self.last_meta = meta
+            else:
+                h_url, h_title = self._history_meta()
+                if h_url:
+                    self.last_meta["url"] = h_url
+                if h_title:
+                    self.last_meta["title"] = h_title
+                self.last_meta["video_active"] = False
+                self.last_meta["page_loading"] = True
+
+        meta = self.last_meta
+        shot = self.call(
+            "Page.captureScreenshot",
+            {"format": "jpeg", "quality": 65},
+            timeout=8.0,
         )
-        if not isinstance(meta, dict):
-            meta = {}
-        shot = self.call("Page.captureScreenshot", {"format": "png"})
         return {
             "ok": True,
             "url": str(meta.get("url", "")),
@@ -354,6 +396,8 @@ class CDPBridge:
             "scroll_y": int(meta.get("scroll_y", 0)),
             "scroll_h": max(self.cur_h, int(meta.get("scroll_h", self.cur_h))),
             "input_focused": bool(meta.get("input_focused", False)),
+            "video_active": bool(meta.get("video_active", False)),
+            "page_loading": bool(meta.get("page_loading", False)),
             "png_b64": str(shot.get("data", "")),
             "at_start": at_start,
         }
@@ -364,17 +408,26 @@ class CDPBridge:
         h = int(req.get("h", self.cur_h))
         self.ensure_viewport(w, h)
 
+        if cmd == "frame":
+            return self.capture_state(fast=True)
+
         if cmd == "navigate":
             url = str(req.get("url", "https://www.google.com/")).strip()
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
+            self.last_meta["url"] = url
+            self.last_meta["video_active"] = False
+            self.last_meta["page_loading"] = True
             self.events.clear()
             nav = self.call("Page.navigate", {"url": url})
             if "errorText" in nav:
                 raise RuntimeError(str(nav["errorText"]))
-            self.wait_for_event({"Page.loadEventFired", "Page.frameStoppedLoading"}, 6.0)
-            time.sleep(0.3)
-            return self.capture_state()
+            self.wait_for_event(
+                {"Page.domContentLoadedEventFired", "Page.loadEventFired", "Page.frameStoppedLoading"},
+                0.9,
+            )
+            time.sleep(0.05)
+            return self.capture_state(fast=False)
 
         if cmd == "click":
             x = max(0, min(self.cur_w - 1, int(req.get("x", 0))))
@@ -389,11 +442,11 @@ class CDPBridge:
                 "Input.dispatchMouseEvent",
                 {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1},
             )
-            time.sleep(0.2)
+            time.sleep(0.06)
             state = self.eval_js("document.readyState")
             if state == "loading":
-                self.wait_for_event({"Page.loadEventFired", "Page.frameStoppedLoading"}, 4.0)
-                time.sleep(0.2)
+                self.wait_for_event({"Page.loadEventFired", "Page.frameStoppedLoading"}, 1.2)
+                time.sleep(0.05)
             return self.capture_state()
 
         if cmd == "key":
@@ -460,7 +513,7 @@ class CDPBridge:
             else:
                 dy = int(req.get("dy", 0))
                 self.eval_js(f"window.scrollBy(0, {dy})")
-            time.sleep(0.08)
+            time.sleep(0.02)
             return self.capture_state()
 
         if cmd == "back":

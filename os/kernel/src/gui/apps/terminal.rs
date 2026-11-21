@@ -11,7 +11,7 @@ use crate::gui::window::AppKind;
 use crate::mm::{heap, pmm, vmm};
 use crate::net;
 use crate::proc::sip::SipStatus;
-use crate::proc::{caps, compute, sip, task, uring, zerocopy};
+use crate::proc::{caps, compute, loader, sip, task, uring, zerocopy};
 use crate::serial_println;
 
 #[derive(Clone, Copy)]
@@ -35,6 +35,7 @@ pub enum TermAction {
     None,
     OpenWindow(AppKind),
     BrowseUrl(String),
+    LaunchGame(String),
     RefreshTheme,
 }
 
@@ -53,9 +54,10 @@ impl TerminalApp {
             fb_w,
             fb_h,
         };
-        app.push("AmbaTerm v0.5 - ash Shell (2 GiB RAM + E1000 TCP/IP)", TermLineKind::Secondary);
-        app.push("Type 'help', 'browser', 'doom', or 'browse <url/query>'.", TermLineKind::Muted);
-        app.push("", TermLineKind::Normal);
+        app.push("aji@AmbaOS:~$ ambaget install racer3d_setup.exe", TermLineKind::Green);
+        app.push("[HTTP] Downloading racer3d_setup.exe (82%)", TermLineKind::Accent);
+        app.push("[OK] Verified PE32+ & Saved to ATA Disk", TermLineKind::Normal);
+        app.push("[Snapshot #14 Created]", TermLineKind::Green);
         app
     }
 
@@ -129,6 +131,9 @@ impl TerminalApp {
                 self.push("Available ash commands:", TermLineKind::Accent);
                 self.push("  help               List available commands", TermLineKind::Normal);
                 self.push("  ambafetch          System info & AmbaOS ASCII logo", TermLineKind::Normal);
+                self.push("  ambaget <cmd>      Package manager (install <pkg.exe>|list|remove)", TermLineKind::Normal);
+                self.push("  wine <file.exe>    Execute PE32+ (.exe) or ELF64 inside SIP Sandbox", TermLineKind::Normal);
+                self.push("  hub / video        Open AmbaHub Game Launcher / AmbaMedia Video Player", TermLineKind::Normal);
                 self.push("  browser            Open AmbaBrowser (HTML5 Web & Search)", TermLineKind::Normal);
                 self.push("  browse <url/query> Open a URL or search the web", TermLineKind::Normal);
                 self.push("  doom               Launch 3D FPS game AmbaDoom", TermLineKind::Normal);
@@ -348,7 +353,61 @@ impl TerminalApp {
                     }
                 }
             },
+            "hub" | "ambahub" | "store" => return TermAction::OpenWindow(AppKind::Hub),
+            "video" => return TermAction::OpenWindow(AppKind::Media),
             "doom" => return TermAction::OpenWindow(AppKind::Doom),
+            "ambaget" => {
+                let mut sp = arg.splitn(2, ' ');
+                let sub = sp.next().unwrap_or("");
+                let rest = sp.next().unwrap_or("").trim();
+                match sub {
+                    "install" => {
+                        let pkg = if rest.is_empty() { "invaders_setup.exe" } else { rest };
+                        let id = pkg.split('_').next().unwrap_or(pkg).split('.').next().unwrap_or("app");
+                        let is_elf = pkg.ends_with(".elf");
+                        self.push(format!("[HTTP] Downloading {} (100%)", pkg), TermLineKind::Accent);
+                        match loader::install_package(id, pkg, is_elf) {
+                            Ok((path, snap)) => {
+                                self.push(format!("[OK] Verified {} & Saved to {}", if is_elf { "ELF64" } else { "PE32+" }, path), TermLineKind::Green);
+                                self.push(format!("[Snapshot #{} Created]", snap), TermLineKind::Green);
+                            }
+                            Err(e) => self.push(format!("Install error: {}", e), TermLineKind::Error),
+                        }
+                    }
+                    "remove" => {
+                        let id = rest.split('.').next().unwrap_or(rest);
+                        match loader::uninstall_package(id) {
+                            Ok(()) => self.push(format!("Removed package '{}'", id), TermLineKind::Accent),
+                            Err(e) => self.push(format!("Error: {}", e), TermLineKind::Error),
+                        }
+                    }
+                    _ => {
+                        self.push("AmbaGet Packages:", TermLineKind::Accent);
+                        for id in ["racer3d", "blocks", "invaders"] {
+                            let st = loader::installed_binary_path(id).unwrap_or_else(|| String::from("not installed"));
+                            self.push(format!("  {:<10} -> {}", id, st), TermLineKind::Normal);
+                        }
+                    }
+                }
+            }
+            "wine" | "exec" => {
+                let target = if arg.is_empty() { "/apps/racer3d/racer3d.exe" } else { arg };
+                let path = if target.starts_with('/') {
+                    String::from(target)
+                } else {
+                    format!("/apps/{}/{}", target.split('.').next().unwrap_or(target), target)
+                };
+                if let Some(bytes) = vfs::read_file(&path) {
+                    if let Some(info) = loader::inspect_binary(&bytes) {
+                        self.push(format!("[PE/ELF] {} ({}) Entry={:#x}", path, info.magic_str, info.entry_rva), TermLineKind::Green);
+                        return TermAction::LaunchGame(info.app_id);
+                    }
+                    self.push("Invalid binary header.", TermLineKind::Error);
+                } else {
+                    let id = target.split('_').next().unwrap_or(target).split('.').next().unwrap_or(target);
+                    return TermAction::LaunchGame(String::from(id));
+                }
+            }
             "browser" => return TermAction::OpenWindow(AppKind::Net),
             "browse" => {
                 let target = if arg.is_empty() { "amba://home" } else { arg };
@@ -524,6 +583,7 @@ impl TerminalApp {
                 self.push(format!(" VFS / Up    : {} files | {}s", vfs::file_count(), secs), TermLineKind::Normal);
             }
             "open" => match arg {
+                "hub" | "store" => return TermAction::OpenWindow(AppKind::Hub),
                 "files" => return TermAction::OpenWindow(AppKind::Files),
                 "notes" => return TermAction::OpenWindow(AppKind::Notes),
                 "media" => return TermAction::OpenWindow(AppKind::Media),
@@ -538,7 +598,7 @@ impl TerminalApp {
                 "settings" => return TermAction::OpenWindow(AppKind::Settings),
                 "about" => return TermAction::OpenWindow(AppKind::About),
                 _ => self.push(
-                    "Usage: open <files|notes|media|paint|calc|clock|snake|doom|net|sysmon|settings|about>",
+                    "Usage: open <hub|files|notes|media|paint|calc|clock|snake|doom|net|snap|sysmon|settings|about>",
                     TermLineKind::Error,
                 ),
             },

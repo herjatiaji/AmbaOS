@@ -53,6 +53,8 @@ pub struct PageFrame {
     pub scroll_y: u32,
     pub scroll_h: u32,
     pub input_focused: bool,
+    pub video_active: bool,
+    pub page_loading: bool,
 }
 
 #[derive(Clone)]
@@ -98,6 +100,8 @@ struct HttpJob {
     phase: HttpPhase,
     started_ms: u64,
     raw_resp: Vec<u8>,
+    expected_len: Option<usize>,
+    keep_alive: bool,
 }
 
 struct NetStack {
@@ -109,6 +113,7 @@ struct NetStack {
     dns_handle: SocketHandle,
     icmp_handle: SocketHandle,
     tcp_handle: SocketHandle,
+    gw_keepalive_ready: bool,
     dhcp_ready: bool,
     ip: Option<Ipv4Cidr>,
     gateway: Option<Ipv4Address>,
@@ -188,8 +193,8 @@ pub fn init() -> bool {
     let _ = icmp_sock.bind(icmp::Endpoint::Ident(PING_IDENT));
     let icmp_handle = sockets.add(icmp_sock);
 
-    let tcp_rx = tcp::SocketBuffer::new(vec![0; 256 * 1024]);
-    let tcp_tx = tcp::SocketBuffer::new(vec![0; 8 * 1024]);
+    let tcp_rx = tcp::SocketBuffer::new(vec![0; 512 * 1024]);
+    let tcp_tx = tcp::SocketBuffer::new(vec![0; 16 * 1024]);
     let tcp_handle = sockets.add(tcp::Socket::new(tcp_rx, tcp_tx));
 
     let stack = NetStack {
@@ -201,6 +206,7 @@ pub fn init() -> bool {
         dns_handle,
         icmp_handle,
         tcp_handle,
+        gw_keepalive_ready: false,
         dhcp_ready: false,
         ip: None,
         gateway: None,
@@ -336,6 +342,25 @@ pub fn start_dns(host: &str) {
     }
 }
 
+fn parse_content_length(raw: &[u8]) -> Option<usize> {
+    let (hdr_end, hdr_bytes) = if let Some(p) = find_subslice(raw, b"\r\n\r\n") {
+        (p + 4, &raw[..p])
+    } else if let Some(p) = find_subslice(raw, b"\n\n") {
+        (p + 2, &raw[..p])
+    } else {
+        return None;
+    };
+    let hdr = core::str::from_utf8(hdr_bytes).ok()?;
+    for line in hdr.lines() {
+        if line.len() >= 15 && line[..15].eq_ignore_ascii_case("content-length:") {
+            if let Ok(len) = line[15..].trim().parse::<usize>() {
+                return Some(hdr_end + len);
+            }
+        }
+    }
+    None
+}
+
 fn start_gateway_request(
     s: &mut NetStack,
     now_ms: u64,
@@ -345,7 +370,16 @@ fn start_gateway_request(
     clear_frame: bool,
     log_line: Option<String>,
 ) {
-    s.sockets.get_mut::<tcp::Socket>(s.tcp_handle).abort();
+    let reuse = if s.gw_keepalive_ready && s.http_job.is_none() {
+        let sock = s.sockets.get_mut::<tcp::Socket>(s.tcp_handle);
+        sock.is_active() && sock.may_send() && sock.may_recv()
+    } else {
+        false
+    };
+    if !reuse {
+        s.sockets.get_mut::<tcp::Socket>(s.tcp_handle).abort();
+        s.gw_keepalive_ready = false;
+    }
     s.http_view.loading = true;
     s.http_view.url = display_url.clone();
     s.http_view.status = status_msg;
@@ -365,9 +399,11 @@ fn start_gateway_request(
         port: GATEWAY_PORT,
         path: gw_path,
         target_ip: Some(GATEWAY_IP),
-        phase: HttpPhase::Connecting,
+        phase: if reuse { HttpPhase::Sending } else { HttpPhase::Connecting },
         started_ms: now_ms,
         raw_resp: Vec::new(),
+        expected_len: None,
+        keep_alive: true,
     });
     if let Some(msg) = log_line {
         s.push_log(msg);
@@ -421,6 +457,7 @@ pub fn start_browser_navigate_mode(raw_input: &str, visual: bool, vw: i32, vh: i
     // 1. Direct local http://10.0.2.2... (non-gateway) hits raw HTTP directly over TCP
     if trimmed.starts_with("http://10.0.2.2") && !trimmed.contains(":18088") {
         s.sockets.get_mut::<tcp::Socket>(s.tcp_handle).abort();
+        s.gw_keepalive_ready = false;
         let (full_url, host, port, path) = parse_http_url(trimmed);
         if let Some(ip) = parse_ipv4(&host) {
             s.http_view = HttpViewState {
@@ -442,6 +479,8 @@ pub fn start_browser_navigate_mode(raw_input: &str, visual: bool, vw: i32, vh: i
                 phase: HttpPhase::Connecting,
                 started_ms: now_ms,
                 raw_resp: Vec::new(),
+                expected_len: None,
+                keep_alive: false,
             });
             s.push_log(format!("[net] HTTP GET {}...", full_url));
             return;
@@ -587,6 +626,29 @@ pub fn start_browser_action(action: &str, vw: i32, vh: i32) {
     );
 }
 
+pub fn start_browser_frame(vw: i32, vh: i32) {
+    let mut guard = NET.lock();
+    let Some(s) = guard.as_mut() else {
+        return;
+    };
+    if !s.dhcp_ready || s.http_job.is_some() {
+        return;
+    }
+    let cw = (vw.clamp(320, 1200)) & !1;
+    let ch = (vh.clamp(200, 680)) & !1;
+    let display = s.http_view.url.clone();
+    let path = format!("/frame?w={}&h={}", cw, ch);
+    start_gateway_request(
+        s,
+        timer::ticks_ms(),
+        display,
+        String::from("Live Streaming"),
+        path,
+        false,
+        None,
+    );
+}
+
 pub fn start_http_get(raw_url: &str) {
     start_browser_navigate(raw_url);
 }
@@ -600,8 +662,41 @@ pub fn poll(now_ms: u64) -> bool {
     let mut ui_dirty = false;
     let instant = Instant::from_millis(now_ms as i64);
 
-    // 1. Poll smoltcp Ethernet + IP interface
-    s.iface.poll(instant, &mut s.dev, &mut s.sockets);
+    // 1. Poll smoltcp Ethernet + IP interface (drain burst packets in one tick)
+    for _ in 0..24 {
+        let _ = s.iface.poll(instant, &mut s.dev, &mut s.sockets);
+        if s.http_job.as_ref().map(|j| j.phase != HttpPhase::Receiving).unwrap_or(true) {
+            break;
+        }
+        let sock = s.sockets.get_mut::<tcp::Socket>(s.tcp_handle);
+        if !sock.can_recv() {
+            break;
+        }
+        if let Some(ref mut job) = s.http_job {
+            while sock.can_recv() {
+                let mut chunk_ok = false;
+                let _ = sock.recv(|data| {
+                    if !data.is_empty() && job.raw_resp.len() < 2 * 1024 * 1024 {
+                        let take = (2 * 1024 * 1024 - job.raw_resp.len()).min(data.len());
+                        job.raw_resp.extend_from_slice(&data[..take]);
+                    }
+                    chunk_ok = true;
+                    (data.len(), ())
+                });
+                if !chunk_ok {
+                    break;
+                }
+            }
+            if job.expected_len.is_none() {
+                job.expected_len = parse_content_length(&job.raw_resp);
+            }
+            if let Some(exp) = job.expected_len {
+                if job.raw_resp.len() >= exp {
+                    break;
+                }
+            }
+        }
+    }
 
     // 2. Poll DHCPv4
     let dhcp_action = {
@@ -851,14 +946,21 @@ pub fn poll(now_ms: u64) -> bool {
                 HttpPhase::Sending => {
                     let sock = s.sockets.get_mut::<tcp::Socket>(s.tcp_handle);
                     if sock.may_send() {
+                        let conn_hdr = if job.keep_alive { "keep-alive" } else { "close" };
                         let req = format!(
-                            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: AmbaBrowser/0.5\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-                            job.path, job.host
+                            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: AmbaBrowser/0.7\r\nAccept: */*\r\nConnection: {}\r\n\r\n",
+                            job.path, job.host, conn_hdr
                         );
                         let _ = sock.send_slice(req.as_bytes());
                         job.phase = HttpPhase::Receiving;
-                        s.http_view.status = String::from("Downloading...");
-                        ui_dirty = true;
+                        if !job.path.starts_with("/frame") {
+                            s.http_view.status = String::from("Downloading...");
+                            ui_dirty = true;
+                        }
+                    } else if job.keep_alive && !sock.is_active() {
+                        sock.abort();
+                        s.gw_keepalive_ready = false;
+                        job.phase = HttpPhase::Connecting;
                     }
                 }
                 HttpPhase::Receiving => {
@@ -877,23 +979,55 @@ pub fn poll(now_ms: u64) -> bool {
                             break;
                         }
                     }
-                    if !sock.may_recv() && (!job.raw_resp.is_empty() || !sock.is_open()) {
-                        sock.abort();
-                        let (st, final_u, title, blocks, body, frame) =
-                            parse_http_response(&job.raw_resp, &job.display_url);
-                        let bytes = job.raw_resp.len();
-                        let summary = format!("[net] http done: {} ({} bytes) - {}", st, bytes, title);
-                        serial_println!("{}", summary);
-                        s.http_view.loading = false;
-                        s.http_view.status = st;
-                        s.http_view.url = final_u;
-                        s.http_view.title = title;
-                        s.http_view.blocks = blocks;
-                        s.http_view.body = body;
-                        s.http_view.frame = frame;
-                        s.push_log(summary);
-                        ui_dirty = true;
-                        done = true;
+                    if job.expected_len.is_none() {
+                        job.expected_len = parse_content_length(&job.raw_resp);
+                    }
+                    let complete = match job.expected_len {
+                        Some(exp) => job.raw_resp.len() >= exp,
+                        None => !sock.may_recv() && (!job.raw_resp.is_empty() || !sock.is_open()),
+                    };
+                    if complete {
+                        if let Some(exp) = job.expected_len {
+                            if job.raw_resp.len() > exp {
+                                job.raw_resp.truncate(exp);
+                            }
+                        }
+                        let can_keep = job.keep_alive
+                            && job.expected_len.is_some()
+                            && sock.may_send()
+                            && sock.may_recv();
+                        if can_keep {
+                            s.gw_keepalive_ready = true;
+                        } else {
+                            sock.abort();
+                            s.gw_keepalive_ready = false;
+                        }
+                        if job.raw_resp.is_empty() && job.keep_alive {
+                            // Server closed idle keep-alive socket before responding; reconnect once
+                            s.gw_keepalive_ready = false;
+                            job.keep_alive = false;
+                            job.expected_len = None;
+                            job.phase = HttpPhase::Connecting;
+                        } else {
+                            let (st, final_u, title, blocks, body, frame) =
+                                parse_http_response(&job.raw_resp, &job.display_url);
+                            let bytes = job.raw_resp.len();
+                            let is_frame = job.path.starts_with("/frame");
+                            let summary = format!("[net] http done: {} ({} bytes) - {}", st, bytes, title);
+                            serial_println!("{}", summary);
+                            s.http_view.loading = false;
+                            s.http_view.status = st;
+                            s.http_view.url = final_u;
+                            s.http_view.title = title;
+                            s.http_view.blocks = blocks;
+                            s.http_view.body = body;
+                            s.http_view.frame = frame;
+                            if !is_frame {
+                                s.push_log(summary);
+                            }
+                            ui_dirty = true;
+                            done = true;
+                        }
                     }
                 }
             }
@@ -1021,6 +1155,28 @@ fn decode_rle565(src: &[u8], target_pixels: usize) -> Vec<u32> {
     out
 }
 
+fn decode_pal8(src: &[u8], target_pixels: usize) -> Vec<u32> {
+    let mut out = Vec::with_capacity(target_pixels);
+    if src.len() < 768 {
+        out.resize(target_pixels, 0x00FFFFFF);
+        return out;
+    }
+    let mut lut = [0u32; 256];
+    for i in 0..256 {
+        let p = i * 3;
+        lut[i] = ((src[p] as u32) << 16) | ((src[p + 1] as u32) << 8) | (src[p + 2] as u32);
+    }
+    let indices = &src[768..];
+    let avail = indices.len().min(target_pixels);
+    for &idx in &indices[..avail] {
+        out.push(lut[idx as usize]);
+    }
+    if out.len() < target_pixels {
+        out.resize(target_pixels, 0x00FFFFFF);
+    }
+    out
+}
+
 fn parse_ambf1(
     raw_body: &[u8],
     fallback_url: &str,
@@ -1042,6 +1198,9 @@ fn parse_ambf1(
     let mut scroll_y: u32 = 0;
     let mut scroll_h: u32 = 448;
     let mut input_focused = false;
+    let mut video_active = false;
+    let mut page_loading = false;
+    let mut is_pal8 = false;
 
     for line in hdr_str.lines().skip(1) {
         if let Some(v) = line.strip_prefix("STATUS:") {
@@ -1060,12 +1219,23 @@ fn parse_ambf1(
             scroll_h = v.trim().parse::<u32>().unwrap_or(h);
         } else if let Some(v) = line.strip_prefix("INPUT:") {
             input_focused = v.trim() == "1";
+        } else if let Some(v) = line.strip_prefix("VIDEO:") {
+            video_active = v.trim() == "1";
+        } else if let Some(v) = line.strip_prefix("LOADING:") {
+            page_loading = v.trim() == "1";
+        } else if let Some(v) = line.strip_prefix("ENC:") {
+            is_pal8 = v.trim().eq_ignore_ascii_case("PAL8");
         }
     }
 
     let fw = w.clamp(16, 1600) as u16;
     let fh = h.clamp(16, 1200) as u16;
-    let pixels = decode_rle565(pix_bytes, (fw as usize) * (fh as usize));
+    let target_pixels = (fw as usize) * (fh as usize);
+    let pixels = if is_pal8 {
+        decode_pal8(pix_bytes, target_pixels)
+    } else {
+        decode_rle565(pix_bytes, target_pixels)
+    };
     let frame = Arc::new(PageFrame {
         width: fw,
         height: fh,
@@ -1073,6 +1243,8 @@ fn parse_ambf1(
         scroll_y,
         scroll_h: scroll_h.max(fh as u32),
         input_focused,
+        video_active,
+        page_loading,
     });
     (status, final_url, title, Vec::new(), String::new(), Some(frame))
 }
@@ -1103,6 +1275,30 @@ fn parse_http_response(
 
     if body_bytes.starts_with(b"AMBF1\n") || body_bytes.starts_with(b"AMBF1\r\n") {
         return parse_ambf1(body_bytes, fallback_url);
+    }
+
+    if body_bytes.starts_with(b"MZ") || body_bytes.starts_with(b"\x7FELF") {
+        if let Some(info) = crate::proc::loader::inspect_binary(body_bytes) {
+            let ext = if info.format == crate::proc::loader::BinaryFormat::Elf64 { "elf" } else { "exe" };
+            let target = format!("/apps/{}/{}.{}", info.app_id, info.app_id, ext);
+            let res_msg = match crate::proc::loader::install_raw_binary(&target, body_bytes) {
+                Ok((_, snap)) => format!("[OK] Downloaded via HTTP & installed to {} (Snapshot #{})", target, snap),
+                Err(e) => format!("Downloaded {} bytes but install failed: {}", body_bytes.len(), e),
+            };
+            let blocks = vec![
+                PageBlock::Heading1(format!("Package Downloaded: {}", info.app_id)),
+                PageBlock::Paragraph(format!("Header: {} | Entry RVA: {:#x}", info.magic_str, info.entry_rva)),
+                PageBlock::Paragraph(res_msg.clone()),
+            ];
+            return (
+                String::from("200 OK"),
+                String::from(fallback_url),
+                format!("{}.{}", info.app_id, ext),
+                blocks,
+                res_msg,
+                None,
+            );
+        }
     }
 
     let head = core::str::from_utf8(head_bytes).unwrap_or("");
