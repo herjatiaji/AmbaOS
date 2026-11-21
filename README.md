@@ -1,4 +1,4 @@
-# AmbaOS v0.7.0 - Sistem Operasi Bare-Metal Terjomok Se-Kerajaan Ngawi
+# AmbaOS v0.7.0 - Sistem Operasi Bare-Metal Tenaga Muwani
 
 <p align="center">
   <img src="os/assets/logo.jpeg" alt="Logo Resmi AmbaOS - Restu Mas Rusdi" width="220" />
