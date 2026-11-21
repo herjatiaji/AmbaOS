@@ -9,6 +9,7 @@ use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
 use crate::gui::theme::ThemeColors;
 use crate::net::{self, HttpViewState, PageBlock};
+use crate::proc::caps::{self, AppId, CAP_NET_ACCESS};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NetTab {
@@ -114,6 +115,10 @@ impl NetApp {
     pub fn navigate_to(&mut self, target: &str) {
         let trimmed = target.trim();
         if trimmed.is_empty() {
+            return;
+        }
+        if trimmed != "amba://home" && caps::check(AppId::Browser, CAP_NET_ACCESS).is_err() {
+            self.omnibox = String::from("CAPABILITY DENIED: NET_ACCESS revoked");
             return;
         }
         self.tab = NetTab::Browser;
@@ -514,6 +519,10 @@ impl NetApp {
             }
             NetTab::Tools => {
                 if (178..=208).contains(&ly) {
+                    if caps::check(AppId::Browser, CAP_NET_ACCESS).is_err() {
+                        self.omnibox = String::from("CAPABILITY DENIED: NET_ACCESS revoked");
+                        return true;
+                    }
                     if (14..=180).contains(&lx) {
                         net::start_ping([10, 0, 2, 2]);
                         return true;

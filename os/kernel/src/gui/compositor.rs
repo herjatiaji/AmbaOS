@@ -533,6 +533,11 @@ impl DesktopCompositor {
                     }
                     SnapAction::RequestReboot => snapshot::request_boot_menu_and_reboot(),
                 },
+                AppKind::SysMon => {
+                    if self.sysmon.handle_click(lx, ly, cw, ch) {
+                        self.dirty = true;
+                    }
+                }
                 AppKind::Settings => match self.settings.handle_click(lx, ly, cw) {
                     SettingsAction::SelectTheme(preset) => {
                         self.theme_preset = preset;

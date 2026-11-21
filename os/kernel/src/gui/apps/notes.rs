@@ -6,10 +6,12 @@ use crate::fs::vfs;
 use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
 use crate::gui::theme::ThemeColors;
+use crate::proc::caps::{self, AppId, CAP_FS_WRITE};
 
 pub struct NotesApp {
     text: String,
     saved: bool,
+    cap_err: Option<&'static str>,
 }
 
 impl NotesApp {
@@ -20,6 +22,7 @@ impl NotesApp {
         Self {
             text: initial,
             saved: true,
+            cap_err: None,
         }
     }
 
@@ -55,14 +58,23 @@ impl NotesApp {
     pub fn handle_click(&mut self, local_x: i32, local_y: i32) -> bool {
         if (6..=32).contains(&local_y) {
             if (10..=164).contains(&local_x) {
-                if vfs::write_file("/home/note.txt", self.text.as_bytes().to_vec()).is_ok() {
-                    self.saved = true;
+                match caps::check(AppId::Notes, CAP_FS_WRITE) {
+                    Ok(_) => {
+                        self.cap_err = None;
+                        if vfs::write_file("/home/note.txt", self.text.as_bytes().to_vec()).is_ok() {
+                            self.saved = true;
+                        }
+                    }
+                    Err(e) => {
+                        self.cap_err = Some(e);
+                    }
                 }
                 return true;
             }
             if (174..=238).contains(&local_x) {
                 self.text.clear();
                 self.saved = false;
+                self.cap_err = None;
                 return true;
             }
         }
@@ -83,7 +95,9 @@ impl NotesApp {
         canvas.draw_rounded_rect_outline(cx + 174, cy + 6, 64, 26, 6, theme.border_inactive);
         canvas.draw_text_font(cx + 188, cy + 10, "Clear", theme.text_primary, FontFace::Ui);
 
-        let status = if self.saved {
+        let status = if let Some(err) = self.cap_err {
+            String::from(err)
+        } else if self.saved {
             format!("Saved ({} chars)", self.text.len())
         } else {
             format!("Unsaved ({} chars)", self.text.len())
@@ -94,7 +108,13 @@ impl NotesApp {
             cy + 10,
             cw - 250,
             &status,
-            if self.saved { theme.term_green } else { theme.accent_soft },
+            if self.cap_err.is_some() {
+                theme.err
+            } else if self.saved {
+                theme.term_green
+            } else {
+                theme.accent_soft
+            },
             FontFace::Ui,
         );
 

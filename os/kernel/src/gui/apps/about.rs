@@ -33,11 +33,11 @@ impl AboutApp {
 
         let tx = x + 144;
         let tw = (w - 156).max(60);
-        canvas.draw_text_clipped_font(tx, cy + 28, tw, "AmbaOS v0.5.0", theme.text_primary, FontFace::UiBold);
-        canvas.draw_text_clipped_font(tx, cy + 50, tw, "AmbaDE Glass Desktop", theme.accent_soft, FontFace::UiBold);
-        canvas.draw_text_clipped_font(tx, cy + 76, tw, "x86_64 Bare-Metal Kernel", theme.text_secondary, FontFace::Ui);
-        canvas.draw_text_clipped_font(tx, cy + 96, tw, "2 GiB RAM + 256 MiB Heap", theme.text_muted, FontFace::Ui);
-        canvas.draw_text_clipped_font(tx, cy + 116, tw, "AmbaBrowser + AmbaDoom (13 Apps)", theme.accent_sec, FontFace::Ui);
+        canvas.draw_text_clipped_font(tx, cy + 28, tw, "AmbaOS v0.6.0", theme.text_primary, FontFace::UiBold);
+        canvas.draw_text_clipped_font(tx, cy + 50, tw, "Next-Gen Immutable + Async OS", theme.accent_soft, FontFace::UiBold);
+        canvas.draw_text_clipped_font(tx, cy + 76, tw, "x86_64 Bare-Metal Rust Kernel", theme.text_secondary, FontFace::Ui);
+        canvas.draw_text_clipped_font(tx, cy + 96, tw, "io_uring | ZC | SIP | Caps | vNPU", theme.text_muted, FontFace::Ui);
+        canvas.draw_text_clipped_font(tx, cy + 116, tw, "14 Apps + Atomic Rollback", theme.accent_sec, FontFace::Ui);
 
         // Specs rows
         let mut y = cy + 164;

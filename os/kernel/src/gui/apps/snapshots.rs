@@ -5,6 +5,7 @@ use crate::fs::snapshot::{self, GenHealth};
 use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
 use crate::gui::theme::ThemeColors;
+use crate::proc::caps::{self, AppId, CAP_CORE_ADMIN};
 
 #[derive(Clone, Copy)]
 pub enum SnapAction {
@@ -44,6 +45,11 @@ impl SnapshotsApp {
         let bw = (avail / 4).max(80);
 
         if ly >= btn_y && ly <= btn_y + btn_h {
+            if let Err(e) = caps::check(AppId::Snapshots, CAP_CORE_ADMIN) {
+                self.status_msg = String::from(e);
+                self.status_err = true;
+                return SnapAction::None;
+            }
             if lx >= 14 && lx <= 14 + bw {
                 let id = snapshot::create_snapshot("", theme_idx, show_watermark);
                 self.selected_gen = id;
@@ -92,6 +98,11 @@ impl SnapshotsApp {
         let fy = ch - 42;
         if ly >= fy && ly <= fy + 30 {
             if lx >= 14 && lx <= 170 {
+                if let Err(e) = caps::check(AppId::Snapshots, CAP_CORE_ADMIN) {
+                    self.status_msg = String::from(e);
+                    self.status_err = true;
+                    return SnapAction::None;
+                }
                 match snapshot::rollback_live(self.selected_gen) {
                     Ok((t_idx, wm)) => {
                         self.status_msg = format!("Rolled back Core OS live to Gen #{}", self.selected_gen);
@@ -104,6 +115,11 @@ impl SnapshotsApp {
                     }
                 }
             } else if lx >= 178 && lx <= 316 {
+                if let Err(e) = caps::check(AppId::Snapshots, CAP_CORE_ADMIN) {
+                    self.status_msg = String::from(e);
+                    self.status_err = true;
+                    return SnapAction::None;
+                }
                 match snapshot::delete_generation(self.selected_gen) {
                     Ok(()) => {
                         self.status_msg = format!("Deleted Gen #{}", self.selected_gen);

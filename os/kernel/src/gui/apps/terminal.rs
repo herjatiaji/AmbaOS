@@ -10,7 +10,8 @@ use crate::gui::theme::ThemeColors;
 use crate::gui::window::AppKind;
 use crate::mm::{heap, pmm, vmm};
 use crate::net;
-use crate::proc::task;
+use crate::proc::sip::SipStatus;
+use crate::proc::{caps, compute, sip, task, uring, zerocopy};
 use crate::serial_println;
 
 #[derive(Clone, Copy)]
@@ -132,6 +133,10 @@ impl TerminalApp {
                 self.push("  browse <url/query> Open a URL or search the web", TermLineKind::Normal);
                 self.push("  doom               Launch 3D FPS game AmbaDoom", TermLineKind::Normal);
                 self.push("  snap [subcmd]      Immutable snapshots (list|create|update|rollback|corrupt|bootmenu)", TermLineKind::Normal);
+                self.push("  uring [bench|zc]   Async io_uring benchmark & Zero-Copy DMA arena", TermLineKind::Normal);
+                self.push("  sip [list|spawn|ipc|trap]  Single-Address-Space micro-unikernels", TermLineKind::Normal);
+                self.push("  cap [list|toggle|attack]   Object-Capability Zero-Trust CSpace", TermLineKind::Normal);
+                self.push("  compute [status|dag|zram]  Heterogeneous P/E/vNPU DAG Scheduler", TermLineKind::Normal);
                 self.push("  ip / ping / dns    E1000 status, Ping, & DNS lookup", TermLineKind::Normal);
                 self.push("  ls / cat / write   Initramfs VFS (Core RO / User RW)", TermLineKind::Normal);
                 self.push("  date / mem / ps    RTC, RAM/Heap, & Kernel Tasks", TermLineKind::Normal);
@@ -196,6 +201,153 @@ impl TerminalApp {
                     _ => self.push("Usage: snap [list|create <lbl>|update|rollback <id>|corrupt|bootmenu]", TermLineKind::Error),
                 }
             }
+            "uring" => match arg {
+                "bench" => {
+                    let (done, avg) = uring::run_burst_benchmark(1024);
+                    let msg = format!("[uring] Burst {} async SQEs completed | 0 ctx-sw | ~{} cyc/op", done, avg);
+                    serial_println!("{}", msg);
+                    self.push(msg, TermLineKind::Green);
+                }
+                "zc" => {
+                    let msg = zerocopy::run_vfs_to_net_zerocopy_demo();
+                    serial_println!("[zc] {}", msg);
+                    self.push(msg, TermLineKind::Green);
+                }
+                _ => {
+                    let st = uring::stats();
+                    let zc = zerocopy::stats();
+                    self.push(
+                        format!(
+                            "io_uring: submitted={} completed={} ctx_switches={} avg={} cyc/op",
+                            st.submitted, st.completed, st.ctx_switches, st.avg_cycles
+                        ),
+                        TermLineKind::Accent,
+                    );
+                    self.push(
+                        format!(
+                            "ZeroCopy: active={}/{} transfers={} saved={} B zram={} B",
+                            zc.active_slots, zc.total_slots, zc.transfers, zc.bytes_saved, zc.zram_saved_bytes
+                        ),
+                        TermLineKind::Secondary,
+                    );
+                }
+            },
+            "sip" => match arg {
+                "spawn" => {
+                    let msg = sip::spawn_next_unikernel();
+                    serial_println!("[sip] {}", msg);
+                    self.push(msg, TermLineKind::Green);
+                }
+                "ipc" => {
+                    let msg = sip::run_nanosecond_ipc_demo();
+                    serial_println!("[sip] {}", msg);
+                    self.push(msg, TermLineKind::Green);
+                }
+                "trap" => {
+                    let msg = sip::run_rogue_sip_trap_demo();
+                    serial_println!("[sip] {}", msg);
+                    self.push(msg, TermLineKind::Error);
+                }
+                _ => {
+                    let (isos, _, tlb) = sip::snapshot();
+                    self.push(format!("SIP Micro-Unikernels (0 TLB flushes={}):", tlb), TermLineKind::Accent);
+                    for iso in isos {
+                        let st = if iso.status == SipStatus::TrappedFault { "TRAP" } else { "RUN" };
+                        self.push(
+                            format!(
+                                "  #{} {} ({}) [{}] [{}] boot={}c ipc={}",
+                                iso.id,
+                                iso.name,
+                                iso.profile,
+                                st,
+                                caps::format_caps_short(iso.caps),
+                                iso.boot_cycles,
+                                iso.ipc_count
+                            ),
+                            if iso.status == SipStatus::TrappedFault { TermLineKind::Error } else { TermLineKind::Normal },
+                        );
+                    }
+                }
+            },
+            "cap" => {
+                let mut sp = arg.splitn(3, ' ');
+                let sub = sp.next().unwrap_or("");
+                let a1 = sp.next().unwrap_or("");
+                let a2 = sp.next().unwrap_or("");
+                match sub {
+                    "attack" => {
+                        let msg = caps::simulate_unauthorized_attack();
+                        serial_println!("[cap] {}", msg);
+                        self.push(msg, TermLineKind::Error);
+                    }
+                    "toggle" | "grant" | "revoke" => {
+                        if let (Some(app), Some(bit)) = (caps::parse_app(a1), caps::parse_cap(a2)) {
+                            let active = match sub {
+                                "grant" => {
+                                    caps::grant(app, bit);
+                                    true
+                                }
+                                "revoke" => {
+                                    caps::revoke(app, bit);
+                                    false
+                                }
+                                _ => caps::toggle(app, bit),
+                            };
+                            let msg = format!(
+                                "[cap] {} {} -> {}",
+                                app.name(),
+                                caps::cap_name(bit),
+                                if active { "GRANTED" } else { "REVOKED" }
+                            );
+                            serial_println!("{}", msg);
+                            self.push(msg, TermLineKind::Accent);
+                        } else {
+                            self.push("Usage: cap <toggle|grant|revoke> <notes|browser|doom|snap> <write|net|admin>", TermLineKind::Error);
+                        }
+                    }
+                    _ => {
+                        let sn = caps::snapshot();
+                        self.push(
+                            format!("Capability CSpace (OK={} DENIED={}): {}", sn.granted_checks, sn.denied_checks, sn.last_audit),
+                            TermLineKind::Accent,
+                        );
+                        for e in sn.entries {
+                            self.push(
+                                format!("  {:<12} [{}]", e.app.name(), caps::format_caps_short(e.caps)),
+                                TermLineKind::Normal,
+                            );
+                        }
+                    }
+                }
+            }
+            "compute" => match arg {
+                "dag" => {
+                    let msg = compute::schedule_npu_dag();
+                    serial_println!("[compute] {}", msg);
+                    self.push(msg, TermLineKind::Green);
+                }
+                "zram" => {
+                    let msg = compute::run_ecore_zram_pass();
+                    serial_println!("[compute] {}", msg);
+                    self.push(msg, TermLineKind::Green);
+                }
+                _ => {
+                    let st = compute::stats();
+                    self.push(
+                        format!(
+                            "Compute Graph: P-Core={} ({}c) | E-Core={} ({}c) | vNPU={} ({}c) | Zram={} B",
+                            st.p_core_ops, st.p_core_cyc, st.e_core_ops, st.e_core_cyc, st.npu_ops, st.npu_cyc, st.zram_saved_bytes
+                        ),
+                        TermLineKind::Accent,
+                    );
+                    for n in st.nodes {
+                        self.push(
+                            format!("  Node #{} [{}] Stage {}: {} ({}c)", n.id, n.unit.label(), n.stage, n.desc, n.cycles),
+                            TermLineKind::Normal,
+                        );
+                    }
+                }
+            },
             "doom" => return TermAction::OpenWindow(AppKind::Doom),
             "browser" => return TermAction::OpenWindow(AppKind::Net),
             "browse" => {

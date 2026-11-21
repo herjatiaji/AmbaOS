@@ -7,6 +7,7 @@ pub struct TaskInfo {
     pub pid: u32,
     pub name: &'static str,
     pub ring: u8,
+    pub unit: &'static str,
     pub state: &'static str,
     pub cpu_ticks: u64,
 }
@@ -16,13 +17,13 @@ static TASKS: Mutex<Vec<TaskInfo>> = Mutex::new(Vec::new());
 pub fn init() {
     let mut guard = TASKS.lock();
     *guard = alloc::vec![
-        TaskInfo { pid: 0, name: "kernel_idle", ring: 0, state: "READY", cpu_ticks: 0 },
-        TaskInfo { pid: 1, name: "amba_compositor", ring: 0, state: "RUNNING", cpu_ticks: 0 },
-        TaskInfo { pid: 2, name: "ps2_input_d", ring: 0, state: "RUNNING", cpu_ticks: 0 },
-        TaskInfo { pid: 3, name: "amba_audio_d", ring: 0, state: "SLEEPING", cpu_ticks: 0 },
-        TaskInfo { pid: 4, name: "amba_net_d", ring: 0, state: "RUNNING", cpu_ticks: 0 },
-        TaskInfo { pid: 5, name: "sysmon_d", ring: 0, state: "SLEEPING", cpu_ticks: 0 },
-        TaskInfo { pid: 6, name: "amba_term (ash)", ring: 0, state: "RUNNING", cpu_ticks: 0 },
+        TaskInfo { pid: 0, name: "kernel_idle", ring: 0, unit: "E-Core", state: "READY", cpu_ticks: 0 },
+        TaskInfo { pid: 1, name: "amba_compositor", ring: 0, unit: "P-Core", state: "RUNNING", cpu_ticks: 0 },
+        TaskInfo { pid: 2, name: "ps2_input_d", ring: 0, unit: "P-Core", state: "RUNNING", cpu_ticks: 0 },
+        TaskInfo { pid: 3, name: "io_uring_cq", ring: 0, unit: "E-Core", state: "RUNNING", cpu_ticks: 0 },
+        TaskInfo { pid: 4, name: "amba_net_zc", ring: 0, unit: "ZC-DMA", state: "RUNNING", cpu_ticks: 0 },
+        TaskInfo { pid: 5, name: "vnpu_dag_d", ring: 0, unit: "vNPU", state: "RUNNING", cpu_ticks: 0 },
+        TaskInfo { pid: 6, name: "sip_unikernels", ring: 0, unit: "SIP-SAS", state: "RUNNING", cpu_ticks: 0 },
     ];
 }
 
