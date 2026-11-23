@@ -1,4 +1,4 @@
-# AmbaOS v0.7.0 - Sistem Operasi Bare-Metal Terjomok Se-Kerajaan Ngawi
+# AmbaOS v0.7.1 - Sistem Operasi Bare-Metal Tenaga Muwani
 
 <p align="center">
   <img src="assets/logo.jpeg" alt="Logo Resmi AmbaOS - Restu Mas Rusdi" width="220" />
@@ -8,9 +8,9 @@
   <strong>Emblem Resmi Kerajaan Ngawi - Ditenagai Ambatron 5000 &amp; Barbershop Mas Rusdi</strong>
 </p>
 
-![Tampilan Desktop AmbaOS v0.7.0 di QEMU](assets/ambaos_hero_banner.png)
+![Tampilan Desktop AmbaOS v0.7.1 di QEMU](assets/ambaos_hero_banner.png)
 
-Selamat datang di **AmbaOS v0.7.0**, sistem operasi `x86_64` murni `#![no_std]` Rust yang ditempa langsung di ruang belakang Barbershop Mas Rusdi dengan restu teknologi Ambatron 5000. Dibangun tanpa numpang kernel Linux ataupun Windows, AmbaOS lahir dari tekad bulat: bikin OS yang tampilannya ganteng, kencang, tahan banting kalau lagi apes, dan tentunya sangar dipakai warga Ngawi buat browsing YouTube sampai mabar Racer3D.
+Selamat datang di **AmbaOS v0.7.1**, sistem operasi `x86_64` murni `#![no_std]` Rust yang ditempa langsung di ruang belakang Barbershop Mas Rusdi dengan restu teknologi Ambatron 5000. Dibangun tanpa numpang kernel Linux ataupun Windows, AmbaOS lahir dari tekad bulat: bikin OS yang tampilannya ganteng, kencang, ramah bagi semua kalangan (termasuk pengguna tanpa mouse dan *low-vision*), tahan banting kalau lagi apes, dan tentunya sangar dipakai warga Ngawi buat browsing YouTube sampai mabar Racer3D.
 
 > PERINGATAN WARGA NGAWI: Sistem operasi ini dirancang bebas bloatware, anti blue-screen baperan, dan dilengkapi sabuk pengaman rollback otomatis kalau ada yang iseng ngerusak sistem tengah malam.
 
@@ -56,12 +56,12 @@ Biar tidak dikira cuma omon-omon belaka di barbershop, berikut jajaran sesepuh d
 
 ---
 
-## Ekosistem Desktop `AmbaDE` v0.7.0 (15 Aplikasi Siap Tempur)
+## Ekosistem Desktop `AmbaDE` v0.7.1 (15 Aplikasi Siap Tempur)
 
 Tampilan desktop sudah dipermak total biar kelihatan rapi kayak OS sultan, bukan sekumpulan kotak terminal yang bikin sakit mata:
 
-- **Top Bar, Spotlight Search (`Ctrl+Space`), Control Center Widget & Floating Dock**:
-  Ada kolom pencarian cepat di atas, panel kontrol **AmbaOS v0.7.0** di kanan atas dengan badge `SIP Sandbox Active`, 3 tombol pintas (`Install .exe/.elf`, `AmbaSnap Rollback`, `Media Player`), bar CPU/RAM, sakelar `Boost Mode`, serta Dock 6 ikon di bawah.
+- **Top Bar (`A11y | F1`), Spotlight Search (`Ctrl+Space`), Control Center Widget & Floating Dock**:
+  Ada kolom pencarian cepat di atas, tombol cepat **`A11y | F1`** di topbar untuk kontrol aksesibilitas, panel kontrol **AmbaOS v0.7.1** di kanan atas dengan badge `SIP Sandbox Active`, 3 tombol pintas (`Install .exe/.elf`, `AmbaSnap Rollback`, `Media Player`), bar CPU/RAM, sakelar `Boost Mode`, serta Dock 6 ikon di bawah.
 - **`AmbaHub` (Game Launcher & `.exe` / `.elf` Store)**:
   Launcher bergaya etalase game yang bisa mengunduh paket installer via HTTP ke partisi permanen `/apps/*`, menjalankan **`AmbaSetup Wizard`** untuk verifikasi header **PE32+ (`MZ` / `PE\0\0` AMD64)** maupun **ELF64**, lengkap dengan pemutar **`.ambv Trailer Preview`**. Game yang siap dimainkan antara lain:
   - **Racer3D (`.exe`)**: Balapan jalan tol senja perspektif 3D.
@@ -69,13 +69,32 @@ Tampilan desktop sudah dipermak total biar kelihatan rapi kayak OS sultan, bukan
   - **Invaders Setup**: Unduh paket `invaders_setup.exe` langsung lewat HTTP lalu mainkan game tembak-menembak alien.
   - **Doom3D / `AmbaDoom`**: Raycaster FPS 3D legendaris di koridor E1M1 Hangar.
 - **`AmbaBrowser` (HTML5 Visual Engine + HTTP/1.1 Keep-Alive + `ENC:PAL8`)**:
-  Terhubung ke host gateway (`10.0.2.2:18088`) dengan Chrome headless berakselerasi GPU, protokol persisten HTTP/1.1 `Keep-Alive` + parsing `Content-Length`, serta kuantisasi palet `ENC:PAL8` cepat. Bisa membuka Google, Wikipedia, Hacker News, Rust Lang, sampai YouTube lengkap dengan mode streaming `Live: ON/OFF` otomatis saat memutar `<video>`.
+  Terhubung ke host gateway (`10.0.2.2:18088`) dengan Chrome headless berakselerasi GPU, protokol persisten HTTP/1.1 `Keep-Alive` + parsing `Content-Length`, serta kuantisasi palet `ENC:PAL8` cepat. Bisa membuka Google, Wikipedia, Hacker News, Rust Lang, sampai YouTube lengkap dengan mode streaming `Live: ON/OFF` otomatis saat memutar `<video>`. Mendukung shortcut `Ctrl+L` (fokus URL bar), `1`-`6` di Speed Dial, dan `PageUp`/`PageDown`.
 - **`AmbaMedia` (`.ambv` Video Player, Chiptune Synth & Gallery)**:
-  Pemutar video multi-frame 30 FPS via `Canvas::blit_rgb_u32` dengan toggle filter **`vNPU HDR`**, seek timeline bar, 4 lagu synth PC Speaker dengan visualizer 16-bar, dan galeri emblem resmi Kerajaan Ngawi.
+  Pemutar video multi-frame 30 FPS via `Canvas::blit_rgb_u32` dengan toggle filter **`vNPU HDR`**, seek timeline bar, 4 lagu synth PC Speaker dengan visualizer 16-bar, kontrol keyboard (`Space`/`Left`/`Right`/`M`/`H`), dan galeri emblem resmi Kerajaan Ngawi.
 - **`Files` (VFS Explorer & PE32+/ELF64 Binary Inspector)**:
-  Melihat isi partisi `[RO]` dan `[RW]`, membedah header `PE32+` / `ELF64` (`Entry RVA`, `ImageBase`, daftar import `kernel32.dll`, `gdi32.dll`, `winmm.dll`), dan tombol langsung **`Run Executable in SIP Sandbox`**.
+  Melihat isi partisi `[RO]` dan `[RW]`, membedah header `PE32+` / `ELF64` (`Entry RVA`, `ImageBase`, daftar import `kernel32.dll`, `gdi32.dll`, `winmm.dll`), navigasi penuh via `Up`/`Down`/`Enter`, dan tombol langsung **`Run Executable in SIP Sandbox`**.
 - **Aplikasi Pendukung Lainnya**:
-  `AmbaTerm` (`ash` shell), `AmbaSnap`, `SysMon` (monitor 4 tab `Tasks | io_uring & ZeroCopy | SIP VMs | Cap & vNPU`), `AmbaNotes`, `AmbaPaint`, `Calculator`, `AmbaClock`, `AmbaSnake`, `Settings` (4 preset tema + watermark toggle), dan `About`.
+  `AmbaTerm` (`ash` shell + scrollback `PageUp`/`PageDown`), `AmbaSnap`, `SysMon` (monitor 4 tab `Tasks | io_uring & ZeroCopy | SIP VMs | Cap & vNPU`), `AmbaNotes` (`Ctrl+S` simpan cepat), `AmbaPaint`, `Calculator`, `AmbaClock`, `AmbaSnake`, `Settings` (5 preset tema termasuk **High Contrast** + tab **Accessibility** + watermark toggle), dan `About`.
+
+---
+
+## Aksesibilitas Universal & Navigasi Full Keyboard (`A11y` Suite v0.7.1)
+
+Kerajaan Ngawi menjunjung tinggi prinsip keadilan teknologi: AmbaOS dirancang agar nyaman dipakai semua orang -- baik yang bermata minus, butuh kontras tinggi, maupun yang mengoperasikan komputer 100% lewat keyboard tanpa mouse. Tekan **`F1`** atau klik pil **`A11y | F1`** di pojok kanan atas kapan saja:
+
+| Fitur / Shortcut | Kegunaan Aksesibilitas |
+| :--- | :--- |
+| **`Alt+C`** / `a11y contrast` | Mode **High Contrast** (latar hitam `#000000`, teks putih `#FFFFFF`, border kuning `#FACC15`) |
+| **Large High-Vis Cursor 2x** | Kursor kuning ukuran 2x lebih besar biar tidak pernah hilang dari pandangan |
+| **`Alt+Z`** / `a11y zoom` | **Screen Magnifier 2x** (kaca pembesar `240x150` real-time + crosshair mengikuti kursor) |
+| **`Alt+L`** / `a11y text` | **Readable Large Text 1.5x** di `AmbaTerm`, `AmbaNotes`, `Files`, dan `AmbaBrowser` Text Reader |
+| **`Alt+K`** / `Alt+Panah` + `Alt+Enter` | **Mouse Keys**: gerakkan kursor pakai tombol panah (tahan `Shift` biar lebih cepat) & klik kiri lewat keyboard |
+| **`F1`** / `a11y sound` | Buka panel **Accessibility & Shortcuts**, plus toggle **Audio Feedback Chimes** via PC Speaker |
+| **`Alt+Tab` / `Ctrl+Tab`** | Berpindah fokus antar jendela aplikasi yang sedang terbuka |
+| **`Ctrl+W` / `Alt+F4`** | Menutup jendela aplikasi aktif dengan cepat |
+| **`Alt+M` / `Super`** | Buka/tutup Start Menu lalu pilih aplikasi dengan tombol panah + `Enter` |
+| **`Ctrl+Space`** | Spotlight Search universal (mendukung keyword `a11y`, `contrast`, `zoom`, `cursor`, `mousekeys`) |
 
 ---
 
@@ -94,6 +113,7 @@ Tampilan desktop sudah dipermak total biar kelihatan rapi kayak OS sultan, bukan
 | `sip [list\|spawn\|ipc\|trap]` | Spawn micro-unikernel <1 ms, IPC nanodetik, & tangkap rogue pointer |
 | `cap [list\|toggle\|attack]` | Cek & uji ketahanan Zero-Trust Object-Capability |
 | `compute [status\|dag\|zram]` | Lihat & jalankan graf eksekusi P-Core -> E-Core -> vNPU |
+| `a11y [contrast\|cursor\|zoom\|text\|mousekeys\|sound]` | Cek & toggle langsung seluruh fitur Aksesibilitas Universal |
 | `ip` / `ping` / `dns` | Cek Intel E1000 DHCP `10.0.2.15`, ping gateway/internet, & DNS |
 | `ls` / `cat <path>` / `write <path> <teks>` | Eksplorasi & tulis file ke partisi User `[RW]` vs Core `[RO]` |
 | `reboot` / `shutdown` | Restart ke Boot Rollback Menu atau matikan mesin dengan tenang |
@@ -103,24 +123,26 @@ Tampilan desktop sudah dipermak total biar kelihatan rapi kayak OS sultan, bukan
 ## Cara Build & Menjalankan (WSL2 + QEMU)
 
 ### 1. Kompilasi Kernel & Membuat `ambaos.iso`
-Pastikan di Ubuntu WSL2 sudah terpasang Rust nightly + target `x86_64-unknown-none`, Python 3 (`Pillow`), `xorriso`, dan `qemu-system-x86_64`.
+Pastikan di WSL2 Ubuntu sudah terpasang Rust nightly + target `x86_64-unknown-none`, Python 3 (`Pillow`), `xorriso`, dan `qemu-system-x86_64`.
 
 ```bash
-cd /mnt/e/digifolks-and-personal-projects/oprekpixel/os
+cd os
 chmod +x scripts/*.sh
 ./scripts/build.sh
 ```
 
-Output build sukses akan menghasilkan `ambaos.iso` (~5.1 MB) tanpa satu pun warning.
+Output build sukses akan menghasilkan `ambaos.iso` (~5.1 MB) tanpa satu pun warning. (Catatan: jika cuma ingin mencoba OS-nya, `ambaos.iso` sudah tersedia di folder `os/` dan langsung bisa di-boot tanpa harus compile Rust!)
 
-### 2. Menjalankan AmbaOS
-Dari Windows cukup klik dua kali **`run_ambaos.bat`**, atau dari terminal WSL2 jalankan:
+### 2. Menjalankan AmbaOS (Portabel di Folder Mana Saja)
+Dari Windows cukup klik dua kali **`run_ambaos.bat`** (sudah otomatis mendeteksi lokasi folder lewat `%~dp0` + `wslpath`), atau dari terminal WSL2/Linux jalankan:
 
 ```bash
-./scripts/run_qemu.sh
+./scripts/run_qemu.sh          # Mode desktop GUI standar
+./scripts/run_qemu.sh --vnc    # Mode VNC (127.0.0.1:5900) jika tanpa WSLg/X11
+./scripts/run_qemu.sh --uefi   # Boot memakai firmware OVMF UEFI
 ```
 
-Skrip ini otomatis menyalakan `scripts/amba_web_gateway.py` (port `18088`), membuat disk persisten `ambaos_state.img` (4 MiB), menyalin `ambaos.iso` ke `/tmp/ambaos_run.iso` supaya bebas dari lag I/O `/mnt/e/`, serta mengaktifkan kursor 1:1 `VMMouse`.
+Skrip ini otomatis mengecek ketersediaan `qemu-system-x86_64`/`python3`, auto-fallback ke VNC bila tidak ada display GUI, menyalakan `scripts/amba_web_gateway.py` (port `18088`), membuat disk persisten `ambaos_state.img` (4 MiB), menyalin `ambaos.iso` ke `/tmp/ambaos_run.iso` supaya bebas dari lag I/O drive Windows, serta mengaktifkan kursor 1:1 `VMMouse`.
 
 ### 3. Mantra Wajib Biar QEMU Tidak Lemot (Aktifkan KVM!)
 Secara bawaan, `scripts/run_qemu.sh` akan mencari `/dev/kvm`. Kalau di WSL2 `/dev/kvm` masih terkunci milik `root:kvm`, QEMU terpaksa lari pakai emulasi software TCG yang bikin CPU ngos-ngosan. Buka kunci KVM cukup **sekali seumur hidup** di terminal Ubuntu WSL2:
@@ -135,4 +157,4 @@ Setelah itu restart WSL (`wsl --shutdown` di PowerShell bila perlu), dan jalanka
 
 ## Penutup
 
-Dikodekan dengan penuh kesabaran oleh mas-mas Ngawi dan Ambatron v0.7.0. Kalau masih ada bug atau hal ajaib terjadi, ingat ajaran sesepuh: jangan panik, cukup `snap rollback` dan nikmati hidup seperti biasa.
+Dikodekan dengan penuh kesabaran oleh mas-mas Ngawi dan Ambatron v0.7.1. Kalau masih ada bug atau hal ajaib terjadi, ingat ajaran sesepuh: jangan panik, cukup `snap rollback` dan nikmati hidup seperti biasa.

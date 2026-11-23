@@ -26,6 +26,20 @@ impl NotesApp {
         }
     }
 
+    fn save_notes(&mut self) {
+        match caps::check(AppId::Notes, CAP_FS_WRITE) {
+            Ok(_) => {
+                self.cap_err = None;
+                if vfs::write_file("/home/note.txt", self.text.as_bytes().to_vec()).is_ok() {
+                    self.saved = true;
+                }
+            }
+            Err(e) => {
+                self.cap_err = Some(e);
+            }
+        }
+    }
+
     pub fn handle_key(&mut self, ev: KeyEvent) -> bool {
         match ev {
             KeyEvent::Char(ch) if ch.is_ascii() && !ch.is_ascii_control() => {
@@ -51,6 +65,10 @@ impl NotesApp {
                 }
                 false
             }
+            KeyEvent::CtrlChar('s') => {
+                self.save_notes();
+                true
+            }
             _ => false,
         }
     }
@@ -58,17 +76,7 @@ impl NotesApp {
     pub fn handle_click(&mut self, local_x: i32, local_y: i32) -> bool {
         if (6..=32).contains(&local_y) {
             if (10..=164).contains(&local_x) {
-                match caps::check(AppId::Notes, CAP_FS_WRITE) {
-                    Ok(_) => {
-                        self.cap_err = None;
-                        if vfs::write_file("/home/note.txt", self.text.as_bytes().to_vec()).is_ok() {
-                            self.saved = true;
-                        }
-                    }
-                    Err(e) => {
-                        self.cap_err = Some(e);
-                    }
-                }
+                self.save_notes();
                 return true;
             }
             if (174..=238).contains(&local_x) {
@@ -81,7 +89,7 @@ impl NotesApp {
         false
     }
 
-    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32, focused: bool) {
+    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32, focused: bool, large_text: bool) {
         canvas.fill_rect(cx, cy, cw, ch, theme.window_bg);
 
         // Toolbar
@@ -120,8 +128,9 @@ impl NotesApp {
 
         // Editor body
         let mut y = cy + 48;
-        let max_cols = ((cw - 24) / 8).max(16) as usize;
-        let line_h = 20;
+        let col_div = if large_text { 12 } else { 8 };
+        let max_cols = ((cw - 24) / col_div).max(12) as usize;
+        let line_h = if large_text { 27 } else { 20 };
 
         let mut last_x = cx + 14;
         let mut last_y = y;
@@ -136,24 +145,24 @@ impl NotesApp {
             let mut line_buf = String::new();
             for c in raw_line.chars() {
                 if line_buf.len() >= max_cols {
-                    if y + 18 <= cy + ch - 8 {
-                        canvas.draw_text_clipped_font(cx + 14, y, cw - 28, &line_buf, theme.text_primary, FontFace::Mono);
+                    if y + line_h <= cy + ch - 6 {
+                        canvas.draw_text_scaled_clipped_font(cx + 14, y, cw - 28, &line_buf, theme.text_primary, FontFace::Mono, large_text);
                     }
                     y += line_h;
                     line_buf.clear();
                 }
                 line_buf.push(c);
             }
-            if y + 18 <= cy + ch - 8 {
-                canvas.draw_text_clipped_font(cx + 14, y, cw - 28, &line_buf, theme.text_primary, FontFace::Mono);
-                last_x = cx + 14 + font::measure_text(FontFace::Mono, &line_buf);
+            if y + line_h <= cy + ch - 6 {
+                canvas.draw_text_scaled_clipped_font(cx + 14, y, cw - 28, &line_buf, theme.text_primary, FontFace::Mono, large_text);
+                last_x = cx + 14 + font::measure_text_scaled(FontFace::Mono, &line_buf, large_text);
                 last_y = y;
             }
             y += line_h;
         }
 
-        if focused && last_y + 16 <= cy + ch - 8 {
-            canvas.fill_rect(last_x + 1, last_y + 2, 2, 15, theme.accent);
+        if focused && last_y + 18 <= cy + ch - 6 {
+            canvas.fill_rect(last_x + 1, last_y + 2, 2, if large_text { 22 } else { 15 }, theme.accent);
         }
     }
 }

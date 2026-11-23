@@ -23,6 +23,24 @@ pub enum KeyEvent {
     Tab,
     Escape,
     CtrlSpace,
+    CtrlTab,
+    CtrlChar(char),
+    AltTab,
+    AltF4,
+    AltChar(char),
+    AltUp,
+    AltDown,
+    AltLeft,
+    AltRight,
+    AltEnter,
+    Super,
+    F1,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Delete,
+    Insert,
     Up,
     Down,
     Left,
@@ -71,7 +89,12 @@ static LEFT_SHIFT: AtomicBool = AtomicBool::new(false);
 static RIGHT_SHIFT: AtomicBool = AtomicBool::new(false);
 static CAPS_LOCK: AtomicBool = AtomicBool::new(false);
 static CTRL_DOWN: AtomicBool = AtomicBool::new(false);
+static ALT_DOWN: AtomicBool = AtomicBool::new(false);
 static EXTENDED_PREFIX: AtomicBool = AtomicBool::new(false);
+
+pub fn is_shift_held() -> bool {
+    LEFT_SHIFT.load(Ordering::Relaxed) || RIGHT_SHIFT.load(Ordering::Relaxed)
+}
 
 pub fn held_mask() -> u32 {
     HELD_KEYS.load(Ordering::Relaxed)
@@ -99,27 +122,39 @@ fn handle_scancode(sc: u8) {
 
     let is_ext = EXTENDED_PREFIX.swap(false, Ordering::Relaxed);
     if is_ext {
+        let alt = ALT_DOWN.load(Ordering::Relaxed);
         match sc {
+            0x1D => CTRL_DOWN.store(true, Ordering::Relaxed),
+            0x9D => CTRL_DOWN.store(false, Ordering::Relaxed),
+            0x38 => ALT_DOWN.store(true, Ordering::Relaxed),
+            0xB8 => ALT_DOWN.store(false, Ordering::Relaxed),
+            0x5B | 0x5C => push_event(KeyEvent::Super),
             0x48 => {
                 set_held(KEY_UP, true);
-                push_event(KeyEvent::Up);
+                push_event(if alt { KeyEvent::AltUp } else { KeyEvent::Up });
             }
             0xC8 => set_held(KEY_UP, false),
             0x50 => {
                 set_held(KEY_DOWN, true);
-                push_event(KeyEvent::Down);
+                push_event(if alt { KeyEvent::AltDown } else { KeyEvent::Down });
             }
             0xD0 => set_held(KEY_DOWN, false),
             0x4B => {
                 set_held(KEY_LEFT, true);
-                push_event(KeyEvent::Left);
+                push_event(if alt { KeyEvent::AltLeft } else { KeyEvent::Left });
             }
             0xCB => set_held(KEY_LEFT, false),
             0x4D => {
                 set_held(KEY_RIGHT, true);
-                push_event(KeyEvent::Right);
+                push_event(if alt { KeyEvent::AltRight } else { KeyEvent::Right });
             }
             0xCD => set_held(KEY_RIGHT, false),
+            0x49 => push_event(KeyEvent::PageUp),
+            0x51 => push_event(KeyEvent::PageDown),
+            0x47 => push_event(KeyEvent::Home),
+            0x4F => push_event(KeyEvent::End),
+            0x53 => push_event(KeyEvent::Delete),
+            0x52 => push_event(KeyEvent::Insert),
             _ => {}
         }
         return;
@@ -143,6 +178,9 @@ fn handle_scancode(sc: u8) {
         _ => {}
     }
 
+    let ctrl = CTRL_DOWN.load(Ordering::Relaxed);
+    let alt = ALT_DOWN.load(Ordering::Relaxed);
+
     match sc {
         0x2A => LEFT_SHIFT.store(true, Ordering::Relaxed),
         0xAA => LEFT_SHIFT.store(false, Ordering::Relaxed),
@@ -150,23 +188,41 @@ fn handle_scancode(sc: u8) {
         0xB6 => RIGHT_SHIFT.store(false, Ordering::Relaxed),
         0x1D => CTRL_DOWN.store(true, Ordering::Relaxed),
         0x9D => CTRL_DOWN.store(false, Ordering::Relaxed),
+        0x38 => ALT_DOWN.store(true, Ordering::Relaxed),
+        0xB8 => ALT_DOWN.store(false, Ordering::Relaxed),
         0x3A => {
             let prev = CAPS_LOCK.load(Ordering::Relaxed);
             CAPS_LOCK.store(!prev, Ordering::Relaxed);
         }
+        0x3B => push_event(KeyEvent::F1),
+        0x3E if alt => push_event(KeyEvent::AltF4),
         0x01 => push_event(KeyEvent::Escape),
         0x0E => push_event(KeyEvent::Backspace),
-        0x0F => push_event(KeyEvent::Tab),
-        0x1C => push_event(KeyEvent::Enter),
+        0x0F => {
+            if alt {
+                push_event(KeyEvent::AltTab);
+            } else if ctrl {
+                push_event(KeyEvent::CtrlTab);
+            } else {
+                push_event(KeyEvent::Tab);
+            }
+        }
+        0x1C => push_event(if alt { KeyEvent::AltEnter } else { KeyEvent::Enter }),
         code if code < 0x80 => {
-            if code == 0x39 && CTRL_DOWN.load(Ordering::Relaxed) {
+            if code == 0x39 && ctrl {
                 push_event(KeyEvent::CtrlSpace);
                 return;
             }
             let shift = LEFT_SHIFT.load(Ordering::Relaxed) || RIGHT_SHIFT.load(Ordering::Relaxed);
             let caps = CAPS_LOCK.load(Ordering::Relaxed);
             if let Some(ch) = scancode_to_ascii(code, shift, caps) {
-                push_event(KeyEvent::Char(ch));
+                if ctrl {
+                    push_event(KeyEvent::CtrlChar(ch.to_ascii_lowercase()));
+                } else if alt {
+                    push_event(KeyEvent::AltChar(ch.to_ascii_lowercase()));
+                } else {
+                    push_event(KeyEvent::Char(ch));
+                }
             }
         }
         _ => {}

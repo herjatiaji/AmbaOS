@@ -60,7 +60,7 @@ static _END_MARKER: RequestsEndMarker = RequestsEndMarker::new();
 #[unsafe(no_mangle)]
 unsafe extern "C" fn kmain() -> ! {
     serial::init();
-    serial_println!("\n=== AmbaOS v0.5.0 Booting (x86_64 Rust) ===");
+    serial_println!("\n=== AmbaOS v0.7.1 Booting (x86_64 Rust) ===");
     assert!(BASE_REVISION.is_supported(), "Limine BaseRevision unsupported");
     serial_println!("[OK] Serial COM1 initialized");
 

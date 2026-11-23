@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::drivers::framebuffer::FramebufferInfo;
-use crate::drivers::keyboard::KeyEvent;
+use crate::drivers::keyboard::{self, KeyEvent};
 use crate::drivers::mouse::MouseState;
 use crate::drivers::{audio, power, rtc, timer};
 use crate::fs::snapshot;
@@ -26,7 +26,7 @@ use crate::gui::apps::terminal::{TermAction, TerminalApp};
 use crate::gui::assets;
 use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
-use crate::gui::theme::{ThemeColors, ThemePreset};
+use crate::gui::theme::{AccessibilityConfig, ThemeColors, ThemePreset};
 use crate::gui::window::{AppKind, TOPBAR_H, TitleAction, Window};
 use crate::mm::pmm;
 use crate::net;
@@ -77,6 +77,11 @@ pub struct DesktopCompositor {
     settings: SettingsApp,
     about: AboutApp,
     start_menu_open: bool,
+    start_menu_idx: usize,
+    a11y_menu_open: bool,
+    a11y: AccessibilityConfig,
+    prev_theme_preset: ThemePreset,
+    cue_stop_ms: u64,
     search_focused: bool,
     search_input: String,
     boost_mode: bool,
@@ -137,7 +142,7 @@ impl DesktopCompositor {
             Window::new(AppKind::Doom, "AmbaDoom - E1M1 Hangar", 310, 102, 580, 386, false),
             Window::new(AppKind::Net, "Browser - AmbaBrowser", 210, 88, 860, 580, false),
             Window::new(AppKind::Snapshots, "AmbaSnap - Rollback & Snapshots", 250, 102, 700, 480, false),
-            Window::new(AppKind::Settings, "Settings & Appearance", 380, 140, 440, 376, false),
+            Window::new(AppKind::Settings, "Settings & Accessibility", 360, 120, 500, 412, false),
             Window::new(AppKind::SysMon, "System Monitor (io_uring / SIP / vNPU)", 300, 120, 560, 420, false),
             Window::new(AppKind::About, "About AmbaOS", 380, 140, 440, 340, false),
             Window::new(AppKind::Terminal, "AmbaTerm", right_x, 412, right_w, 214, true),
@@ -175,6 +180,15 @@ impl DesktopCompositor {
             settings: SettingsApp::new(),
             about: AboutApp::new(fb.width, fb.height),
             start_menu_open: false,
+            start_menu_idx: 0,
+            a11y_menu_open: false,
+            a11y: AccessibilityConfig::default(),
+            prev_theme_preset: if theme_preset == ThemePreset::HighContrast {
+                ThemePreset::ObsidianEmber
+            } else {
+                theme_preset
+            },
+            cue_stop_ms: 0,
             search_focused: false,
             search_input: String::new(),
             boost_mode: false,
@@ -221,6 +235,145 @@ impl DesktopCompositor {
         (rx, 102, rw, 294)
     }
 
+    fn cue(&mut self, freq: u32) {
+        if self.a11y.sound_cues {
+            audio::play_freq(freq);
+            self.cue_stop_ms = timer::ticks_ms() + 65;
+        }
+    }
+
+    fn toggle_high_contrast(&mut self) {
+        if self.theme_preset == ThemePreset::HighContrast {
+            self.theme_preset = self.prev_theme_preset;
+            self.cue(440);
+        } else {
+            self.prev_theme_preset = self.theme_preset;
+            self.theme_preset = ThemePreset::HighContrast;
+            self.cue(880);
+        }
+        let _ = snapshot::create_snapshot(
+            &format!("Theme: {}", self.theme_preset.name()),
+            self.theme_preset.to_index(),
+            self.show_watermark,
+        );
+        self.rebuild_wallpaper();
+    }
+
+    fn apply_settings_action(&mut self, act: SettingsAction) {
+        match act {
+            SettingsAction::None => {}
+            SettingsAction::Redraw => {
+                self.dirty = true;
+            }
+            SettingsAction::SelectTheme(preset) => {
+                if preset != ThemePreset::HighContrast {
+                    self.prev_theme_preset = preset;
+                }
+                self.theme_preset = preset;
+                let _ = snapshot::create_snapshot(
+                    &format!("Theme: {}", preset.name()),
+                    preset.to_index(),
+                    self.show_watermark,
+                );
+                self.cue(660);
+                self.rebuild_wallpaper();
+            }
+            SettingsAction::ToggleWatermark => {
+                self.show_watermark = !self.show_watermark;
+                let _ = snapshot::create_snapshot(
+                    "Toggle Watermark",
+                    self.theme_preset.to_index(),
+                    self.show_watermark,
+                );
+                self.dirty = true;
+                self.rebuild_wallpaper();
+            }
+            SettingsAction::ToggleHighContrast => self.toggle_high_contrast(),
+            SettingsAction::ToggleLargeCursor => {
+                self.a11y.large_cursor = !self.a11y.large_cursor;
+                self.cue(if self.a11y.large_cursor { 784 } else { 440 });
+                self.dirty = true;
+            }
+            SettingsAction::ToggleMagnifier => {
+                self.a11y.magnifier = !self.a11y.magnifier;
+                self.cue(if self.a11y.magnifier { 880 } else { 440 });
+                self.dirty = true;
+            }
+            SettingsAction::ToggleLargeText => {
+                self.a11y.large_text = !self.a11y.large_text;
+                self.cue(if self.a11y.large_text { 740 } else { 440 });
+                self.dirty = true;
+            }
+            SettingsAction::ToggleMouseKeys => {
+                self.a11y.mouse_keys = !self.a11y.mouse_keys;
+                self.cue(if self.a11y.mouse_keys { 920 } else { 440 });
+                self.dirty = true;
+            }
+            SettingsAction::ToggleSoundCues => {
+                self.a11y.sound_cues = !self.a11y.sound_cues;
+                if self.a11y.sound_cues {
+                    self.cue(660);
+                } else {
+                    audio::stop();
+                    self.cue_stop_ms = 0;
+                }
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn close_window(&mut self, kind: AppKind) {
+        if let Some(w) = self.windows.iter_mut().find(|w| w.kind == kind) {
+            w.open = false;
+            w.minimized = false;
+        }
+        if kind == AppKind::Media {
+            self.media.stop_playback();
+        } else if kind == AppKind::Doom {
+            audio::stop();
+        }
+        self.dirty = true;
+    }
+
+    fn cycle_focus_window(&mut self) {
+        let vis_count = self.windows.iter().filter(|w| w.is_visible()).count();
+        if vis_count >= 2 {
+            // Move top visible window to bottom so next visible window becomes focused
+            if let Some(top_idx) = self.windows.iter().rposition(|w| w.is_visible()) {
+                let win = self.windows.remove(top_idx);
+                self.windows.insert(0, win);
+                self.cue(587);
+                self.dirty = true;
+                return;
+            }
+        }
+        // If fewer than 2 visible, restore first minimized/open or un-minimized window
+        if let Some(idx) = self.windows.iter().position(|w| w.open && w.minimized) {
+            self.windows[idx].minimized = false;
+            self.focus_index(idx);
+            self.cue(587);
+            self.dirty = true;
+        }
+    }
+
+    fn launch_file_binary(&mut self, path: &str) {
+        if path.ends_with(".ambv") {
+            self.media.open_video_clip(0);
+            self.open_and_focus(AppKind::Media);
+        } else if path.contains("doom") {
+            self.open_and_focus(AppKind::Doom);
+        } else if path.contains("blocks") {
+            self.open_and_focus(AppKind::Hub);
+            let _ = self.hub.launch_by_id("blocks");
+        } else if path.contains("invaders") {
+            self.open_and_focus(AppKind::Hub);
+            let _ = self.hub.launch_by_id("invaders");
+        } else {
+            self.open_and_focus(AppKind::Hub);
+            let _ = self.hub.launch_by_id("racer3d");
+        }
+    }
+
     fn exec_spotlight_query(&mut self) {
         let q = self.search_input.trim().to_ascii_lowercase();
         self.search_input.clear();
@@ -228,7 +381,27 @@ impl DesktopCompositor {
         if q.is_empty() {
             return;
         }
-        if q.contains("racer") || q.contains("blocks") || q.contains("invader") || q.contains(".exe") || q.contains("hub") || q.contains("game") {
+        if q.contains("contrast") || q.contains("hc") {
+            self.toggle_high_contrast();
+            return;
+        } else if q.contains("zoom") || q.contains("magnif") {
+            self.a11y.magnifier = !self.a11y.magnifier;
+            self.dirty = true;
+            return;
+        } else if q.contains("cursor") {
+            self.a11y.large_cursor = !self.a11y.large_cursor;
+            self.dirty = true;
+            return;
+        } else if q.contains("mousekey") {
+            self.a11y.mouse_keys = !self.a11y.mouse_keys;
+            self.dirty = true;
+            return;
+        } else if q.contains("a11y") || q.contains("akses") || q.contains("access") || q == "help" {
+            self.settings.open_a11y_tab();
+            self.open_and_focus(AppKind::Settings);
+            self.dirty = true;
+            return;
+        } else if q.contains("racer") || q.contains("blocks") || q.contains("invader") || q.contains(".exe") || q.contains("hub") || q.contains("game") {
             self.open_and_focus(AppKind::Hub);
             if q.contains("racer") {
                 let _ = self.hub.launch_by_id("racer3d");
@@ -263,8 +436,152 @@ impl DesktopCompositor {
     pub fn handle_key(&mut self, ev: KeyEvent) {
         if ev == KeyEvent::CtrlSpace {
             self.search_focused = !self.search_focused;
+            self.start_menu_open = false;
+            self.a11y_menu_open = false;
             self.dirty = true;
             return;
+        }
+
+        // Global Accessibility & Window Navigation Shortcuts
+        match ev {
+            KeyEvent::F1 => {
+                self.a11y_menu_open = !self.a11y_menu_open;
+                self.start_menu_open = false;
+                self.search_focused = false;
+                self.cue(if self.a11y_menu_open { 784 } else { 523 });
+                self.dirty = true;
+                return;
+            }
+            KeyEvent::Super | KeyEvent::AltChar('m') => {
+                self.start_menu_open = !self.start_menu_open;
+                self.a11y_menu_open = false;
+                self.search_focused = false;
+                self.dirty = true;
+                return;
+            }
+            KeyEvent::AltTab | KeyEvent::CtrlTab => {
+                self.start_menu_open = false;
+                self.a11y_menu_open = false;
+                self.cycle_focus_window();
+                return;
+            }
+            KeyEvent::AltF4 | KeyEvent::CtrlChar('w') => {
+                if let Some(kind) = self.focused_window_kind() {
+                    self.close_window(kind);
+                }
+                return;
+            }
+            KeyEvent::AltChar('z') => {
+                self.apply_settings_action(SettingsAction::ToggleMagnifier);
+                return;
+            }
+            KeyEvent::AltChar('c') => {
+                self.apply_settings_action(SettingsAction::ToggleHighContrast);
+                return;
+            }
+            KeyEvent::AltChar('l') => {
+                self.apply_settings_action(SettingsAction::ToggleLargeText);
+                return;
+            }
+            KeyEvent::AltChar('k') => {
+                self.apply_settings_action(SettingsAction::ToggleMouseKeys);
+                return;
+            }
+            KeyEvent::AltUp | KeyEvent::AltDown | KeyEvent::AltLeft | KeyEvent::AltRight => {
+                let step = if keyboard::is_shift_held() { 32 } else { 14 };
+                let (dx, dy) = match ev {
+                    KeyEvent::AltUp => (0, -step),
+                    KeyEvent::AltDown => (0, step),
+                    KeyEvent::AltLeft => (-step, 0),
+                    _ => (step, 0),
+                };
+                self.move_cursor_by(dx, dy);
+                return;
+            }
+            KeyEvent::AltEnter => {
+                self.on_left_click(self.last_mouse_x, self.last_mouse_y);
+                return;
+            }
+            _ => {}
+        }
+
+        if self.a11y_menu_open {
+            match ev {
+                KeyEvent::Escape => {
+                    self.a11y_menu_open = false;
+                    self.dirty = true;
+                    return;
+                }
+                KeyEvent::Char('1') => {
+                    self.apply_settings_action(SettingsAction::ToggleHighContrast);
+                    return;
+                }
+                KeyEvent::Char('2') => {
+                    self.apply_settings_action(SettingsAction::ToggleLargeCursor);
+                    return;
+                }
+                KeyEvent::Char('3') => {
+                    self.apply_settings_action(SettingsAction::ToggleMagnifier);
+                    return;
+                }
+                KeyEvent::Char('4') => {
+                    self.apply_settings_action(SettingsAction::ToggleLargeText);
+                    return;
+                }
+                KeyEvent::Char('5') => {
+                    self.apply_settings_action(SettingsAction::ToggleMouseKeys);
+                    return;
+                }
+                KeyEvent::Char('6') => {
+                    self.apply_settings_action(SettingsAction::ToggleSoundCues);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        if self.start_menu_open {
+            let count = AppKind::ALL.len();
+            match ev {
+                KeyEvent::Escape => {
+                    self.start_menu_open = false;
+                    self.dirty = true;
+                    return;
+                }
+                KeyEvent::Left => {
+                    self.start_menu_idx = self.start_menu_idx.saturating_sub(1);
+                    self.dirty = true;
+                    return;
+                }
+                KeyEvent::Right => {
+                    if self.start_menu_idx + 1 < count {
+                        self.start_menu_idx += 1;
+                    }
+                    self.dirty = true;
+                    return;
+                }
+                KeyEvent::Up => {
+                    self.start_menu_idx = self.start_menu_idx.saturating_sub(3);
+                    self.dirty = true;
+                    return;
+                }
+                KeyEvent::Down => {
+                    if self.start_menu_idx + 3 < count {
+                        self.start_menu_idx += 3;
+                    }
+                    self.dirty = true;
+                    return;
+                }
+                KeyEvent::Enter => {
+                    if let Some(&kind) = AppKind::ALL.get(self.start_menu_idx) {
+                        self.open_and_focus(kind);
+                        self.start_menu_open = false;
+                        self.dirty = true;
+                    }
+                    return;
+                }
+                _ => {}
+            }
         }
 
         if self.search_focused {
@@ -289,30 +606,88 @@ impl DesktopCompositor {
             return;
         }
 
-        let focused = self.focused_window_kind();
-        if focused == Some(AppKind::Hub) && self.hub.is_playing_game() {
-            if self.hub.handle_key(ev) {
-                self.mark_app_dirty(AppKind::Hub);
-            }
-            return;
-        }
-
-        let target = match focused {
-            Some(AppKind::Notes) => AppKind::Notes,
-            Some(AppKind::Calculator) => AppKind::Calculator,
-            Some(AppKind::Snake) => AppKind::Snake,
-            Some(AppKind::Doom) => AppKind::Doom,
-            Some(AppKind::Net) => AppKind::Net,
-            _ => {
-                if self.windows.iter().any(|w| w.kind == AppKind::Terminal && w.is_visible()) {
-                    AppKind::Terminal
-                } else {
+        // Dedicated Mouse Keys mode: Arrow keys move cursor & Enter clicks
+        if self.a11y.mouse_keys {
+            let step = if keyboard::is_shift_held() { 32 } else { 14 };
+            match ev {
+                KeyEvent::Up => {
+                    self.move_cursor_by(0, -step);
                     return;
                 }
+                KeyEvent::Down => {
+                    self.move_cursor_by(0, step);
+                    return;
+                }
+                KeyEvent::Left => {
+                    self.move_cursor_by(-step, 0);
+                    return;
+                }
+                KeyEvent::Right => {
+                    self.move_cursor_by(step, 0);
+                    return;
+                }
+                KeyEvent::Insert => {
+                    self.on_left_click(self.last_mouse_x, self.last_mouse_y);
+                    return;
+                }
+                _ => {}
             }
+        }
+
+        let Some(target) = self.focused_window_kind() else {
+            return;
         };
 
         match target {
+            AppKind::Hub => {
+                let (changed, hact) = self.hub.handle_menu_key(ev);
+                match hact {
+                    HubAction::OpenDoom => self.open_and_focus(AppKind::Doom),
+                    HubAction::OpenMedia => self.open_and_focus(AppKind::Media),
+                    HubAction::None => {}
+                }
+                if changed || hact != HubAction::None {
+                    self.mark_app_dirty(AppKind::Hub);
+                }
+            }
+            AppKind::Files => {
+                let (changed, fact) = self.files.handle_key(ev);
+                if let FileAction::LaunchBinary(path) = fact {
+                    self.launch_file_binary(&path);
+                    self.dirty = true;
+                } else if changed {
+                    self.mark_app_dirty(AppKind::Files);
+                }
+            }
+            AppKind::Snapshots => {
+                let (changed, sact) = self.snapshots.handle_key(
+                    ev,
+                    self.theme_preset.to_index(),
+                    self.show_watermark,
+                );
+                match sact {
+                    SnapAction::None => {
+                        if changed {
+                            self.mark_app_dirty(AppKind::Snapshots);
+                        }
+                    }
+                    SnapAction::ConfigRestored(t_idx, wm) => {
+                        self.theme_preset = ThemePreset::from_index(t_idx);
+                        self.show_watermark = wm;
+                        self.rebuild_wallpaper();
+                    }
+                    SnapAction::RequestReboot => snapshot::request_boot_menu_and_reboot(),
+                }
+            }
+            AppKind::Settings => {
+                let sact = self.settings.handle_key(ev);
+                self.apply_settings_action(sact);
+            }
+            AppKind::Media => {
+                if self.media.handle_key(ev, timer::ticks_ms()) {
+                    self.mark_app_dirty(AppKind::Media);
+                }
+            }
             AppKind::Notes => {
                 if self.notes.handle_key(ev) {
                     self.mark_app_dirty(AppKind::Notes);
@@ -364,6 +739,20 @@ impl DesktopCompositor {
                         self.show_watermark = wm;
                         self.rebuild_wallpaper();
                     }
+                    TermAction::ToggleA11y(feat) => {
+                        match feat {
+                            "contrast" => self.apply_settings_action(SettingsAction::ToggleHighContrast),
+                            "cursor" => self.apply_settings_action(SettingsAction::ToggleLargeCursor),
+                            "zoom" => self.apply_settings_action(SettingsAction::ToggleMagnifier),
+                            "text" => self.apply_settings_action(SettingsAction::ToggleLargeText),
+                            "mousekeys" => self.apply_settings_action(SettingsAction::ToggleMouseKeys),
+                            "sound" => self.apply_settings_action(SettingsAction::ToggleSoundCues),
+                            _ => {
+                                self.a11y_menu_open = true;
+                                self.dirty = true;
+                            }
+                        }
+                    }
                     TermAction::None => {
                         if changed {
                             self.mark_app_dirty(AppKind::Terminal);
@@ -372,6 +761,21 @@ impl DesktopCompositor {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn move_cursor_by(&mut self, dx: i32, dy: i32) {
+        let nx = (self.last_mouse_x + dx).clamp(0, self.canvas.width - 1);
+        let ny = (self.last_mouse_y + dy).clamp(0, self.canvas.height - 1);
+        if nx != self.last_mouse_x || ny != self.last_mouse_y {
+            self.last_mouse_x = nx;
+            self.last_mouse_y = ny;
+            self.hover_dock = self.dock_hit_index(nx, ny);
+            if self.a11y.magnifier {
+                self.dirty = true;
+            } else {
+                self.cursor_dirty = true;
+            }
         }
     }
 
@@ -402,7 +806,7 @@ impl DesktopCompositor {
             self.last_mouse_x = ms.x;
             self.last_mouse_y = ms.y;
             let new_hover = self.dock_hit_index(ms.x, ms.y);
-            if new_hover != self.hover_dock {
+            if new_hover != self.hover_dock || self.a11y.magnifier {
                 self.hover_dock = new_hover;
                 self.dirty = true;
             } else {
@@ -410,8 +814,15 @@ impl DesktopCompositor {
             }
         }
 
-        if ms.wheel != 0 && self.focused_window_kind() == Some(AppKind::Net) {
-            if self.net_app.handle_wheel(ms.wheel) {
+        if ms.wheel != 0 {
+            let changed = match self.focused_window_kind() {
+                Some(AppKind::Net) => self.net_app.handle_wheel(ms.wheel),
+                Some(AppKind::Files) => self.files.handle_wheel(ms.wheel),
+                Some(AppKind::Snapshots) => self.snapshots.handle_wheel(ms.wheel),
+                Some(AppKind::Terminal) => self.terminal.handle_wheel(ms.wheel),
+                _ => false,
+            };
+            if changed {
                 self.dirty = true;
             }
         }
@@ -466,17 +877,112 @@ impl DesktopCompositor {
         (10, TOPBAR_H + 8, 464, 348)
     }
 
+    fn cursor_bounds(&self) -> (i32, i32) {
+        if self.a11y.large_cursor { (28, 40) } else { (16, 22) }
+    }
+
+    fn cursor_color(&self) -> u32 {
+        if self.theme_preset == ThemePreset::HighContrast || self.a11y.large_cursor {
+            0xFACC15
+        } else {
+            0xF8FAFC
+        }
+    }
+
+    fn topbar_a11y_pill_rect(&self) -> (i32, i32, &'static str) {
+        let w = self.canvas.width;
+        let m = pmm::stats();
+        let gb10 = (m.total_bytes * 10 + 512 * 1024 * 1024) / (1024 * 1024 * 1024);
+        let ram_txt = format!("{}.{} GB RAM", gb10 / 10, gb10 % 10);
+        let rw = font::measure_text(FontFace::Ui, &ram_txt) + 18;
+        let rx = w - rw - 92;
+
+        let snap = net::snapshot();
+        let net_txt = if let Some(ip) = snap.ip {
+            format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+        } else if snap.present {
+            String::from("10.0.2.15")
+        } else {
+            String::from("OFFLINE")
+        };
+        let nw = font::measure_text(FontFace::UiBold, &net_txt) + 18;
+        let nx = rx - nw - 6;
+
+        let lbl = if self.a11y.mouse_keys {
+            "MOUSE KEYS | F1"
+        } else if self.a11y.magnifier {
+            "ZOOM 2x | F1"
+        } else {
+            "A11y | F1"
+        };
+        let aw = font::measure_text(FontFace::UiBold, lbl) + 18;
+        let ax = nx - aw - 6;
+        (ax, aw, lbl)
+    }
+
+    fn a11y_menu_rect(&self) -> (i32, i32, i32, i32) {
+        let mw = 382;
+        (self.canvas.width - mw - 12, TOPBAR_H + 8, mw, 366)
+    }
+
     fn on_left_click(&mut self, mx: i32, my: i32) {
         if my < TOPBAR_H {
-            if (6..=118).contains(&mx) || mx >= self.canvas.width - 36 {
+            let w = self.canvas.width;
+            if (6..=118).contains(&mx) || mx >= w - 36 {
                 self.start_menu_open = !self.start_menu_open;
+                self.a11y_menu_open = false;
+                self.search_focused = false;
+                self.dirty = true;
+                return;
+            }
+            if mx >= w - 60 && mx <= w - 40 {
+                audio::set_muted(!audio::is_muted());
+                self.dirty = true;
+                return;
+            }
+            let (ax, aw, _) = self.topbar_a11y_pill_rect();
+            if mx >= ax && mx <= ax + aw {
+                self.a11y_menu_open = !self.a11y_menu_open;
+                self.start_menu_open = false;
                 self.search_focused = false;
                 self.dirty = true;
                 return;
             }
             self.start_menu_open = false;
+            self.a11y_menu_open = false;
             self.dirty = true;
             return;
+        }
+
+        if self.a11y_menu_open {
+            let (ax, ay, aw, ah) = self.a11y_menu_rect();
+            if mx >= ax && mx < ax + aw && my >= ay && my < ay + ah {
+                let lx = mx - ax;
+                let ly = my - ay;
+                if ly >= 44 && ly < 260 && lx >= 12 && lx < aw - 12 {
+                    let row = (ly - 44) / 36;
+                    match row {
+                        0 => self.apply_settings_action(SettingsAction::ToggleHighContrast),
+                        1 => self.apply_settings_action(SettingsAction::ToggleLargeCursor),
+                        2 => self.apply_settings_action(SettingsAction::ToggleMagnifier),
+                        3 => self.apply_settings_action(SettingsAction::ToggleLargeText),
+                        4 => self.apply_settings_action(SettingsAction::ToggleMouseKeys),
+                        5 => self.apply_settings_action(SettingsAction::ToggleSoundCues),
+                        _ => {}
+                    }
+                    return;
+                }
+                if ly >= ah - 40 && ly <= ah - 10 {
+                    self.a11y_menu_open = false;
+                    self.settings.open_a11y_tab();
+                    self.open_and_focus(AppKind::Settings);
+                    self.dirty = true;
+                    return;
+                }
+                return;
+            }
+            self.a11y_menu_open = false;
+            self.dirty = true;
         }
 
         if self.start_menu_open {
@@ -604,21 +1110,7 @@ impl DesktopCompositor {
                         self.dirty = true;
                     }
                     if let FileAction::LaunchBinary(path) = fact {
-                        if path.ends_with(".ambv") {
-                            self.media.open_video_clip(0);
-                            self.open_and_focus(AppKind::Media);
-                        } else if path.contains("doom") {
-                            self.open_and_focus(AppKind::Doom);
-                        } else if path.contains("blocks") {
-                            self.open_and_focus(AppKind::Hub);
-                            let _ = self.hub.launch_by_id("blocks");
-                        } else if path.contains("invaders") {
-                            self.open_and_focus(AppKind::Hub);
-                            let _ = self.hub.launch_by_id("invaders");
-                        } else {
-                            self.open_and_focus(AppKind::Hub);
-                            let _ = self.hub.launch_by_id("racer3d");
-                        }
+                        self.launch_file_binary(&path);
                     }
                 }
                 AppKind::Notes => {
@@ -683,27 +1175,10 @@ impl DesktopCompositor {
                         self.dirty = true;
                     }
                 }
-                AppKind::Settings => match self.settings.handle_click(lx, ly, cw) {
-                    SettingsAction::SelectTheme(preset) => {
-                        self.theme_preset = preset;
-                        let _ = snapshot::create_snapshot(
-                            &format!("Theme: {}", preset.name()),
-                            preset.to_index(),
-                            self.show_watermark,
-                        );
-                        self.rebuild_wallpaper();
-                    }
-                    SettingsAction::ToggleWatermark => {
-                        self.show_watermark = !self.show_watermark;
-                        let _ = snapshot::create_snapshot(
-                            "Toggle Watermark",
-                            self.theme_preset.to_index(),
-                            self.show_watermark,
-                        );
-                        self.rebuild_wallpaper();
-                    }
-                    SettingsAction::None => {}
-                },
+                AppKind::Settings => {
+                    let sact = self.settings.handle_click(lx, ly, cw);
+                    self.apply_settings_action(sact);
+                }
                 _ => {}
             }
             self.dirty = true;
@@ -772,7 +1247,7 @@ impl DesktopCompositor {
 
     #[inline]
     fn mark_app_dirty(&mut self, kind: AppKind) {
-        if !self.start_menu_open && self.focused_window_kind() == Some(kind) {
+        if !self.start_menu_open && !self.a11y_menu_open && !self.a11y.magnifier && self.focused_window_kind() == Some(kind) {
             self.focused_dirty = true;
         } else {
             self.dirty = true;
@@ -781,6 +1256,11 @@ impl DesktopCompositor {
 
     pub fn tick_and_render_if_needed(&mut self) {
         let now_ms = timer::ticks_ms();
+
+        if self.cue_stop_ms != 0 && now_ms >= self.cue_stop_ms {
+            audio::stop();
+            self.cue_stop_ms = 0;
+        }
 
         if net::poll(now_ms) {
             self.net_app.on_net_update();
@@ -847,14 +1327,16 @@ impl DesktopCompositor {
             self.render_focused_window_only();
         } else if self.cursor_dirty {
             self.cursor_dirty = false;
+            let (cw, ch) = self.cursor_bounds();
             let ox = self.prev_cursor_x;
             let oy = self.prev_cursor_y;
-            self.restore_cursor_bg(ox, oy, 16, 22);
+            self.restore_cursor_bg(ox, oy, cw, ch);
             let nx = self.last_mouse_x;
             let ny = self.last_mouse_y;
-            self.canvas.draw_cursor(nx, ny, 0xF8FAFC);
-            self.fb.blit_rect(&self.canvas.buffer, ox, oy, 16, 22);
-            self.fb.blit_rect(&self.canvas.buffer, nx, ny, 16, 22);
+            let ccol = self.cursor_color();
+            self.canvas.draw_cursor_ex(nx, ny, ccol, self.a11y.large_cursor);
+            self.fb.blit_rect(&self.canvas.buffer, ox, oy, cw, ch);
+            self.fb.blit_rect(&self.canvas.buffer, nx, ny, cw, ch);
             self.prev_cursor_x = nx;
             self.prev_cursor_y = ny;
         }
@@ -890,16 +1372,16 @@ impl DesktopCompositor {
     ) {
         match kind {
             AppKind::Hub => self.hub.render(&mut self.canvas, theme, cx, cy, cw, ch),
-            AppKind::Terminal => self.terminal.render(&mut self.canvas, theme, cx, cy, cw, ch, focused && !self.search_focused),
-            AppKind::Files => self.files.render(&mut self.canvas, theme, cx, cy, cw, ch),
-            AppKind::Notes => self.notes.render(&mut self.canvas, theme, cx, cy, cw, ch, focused),
+            AppKind::Terminal => self.terminal.render(&mut self.canvas, theme, cx, cy, cw, ch, focused && !self.search_focused, self.a11y.large_text),
+            AppKind::Files => self.files.render(&mut self.canvas, theme, cx, cy, cw, ch, self.a11y.large_text),
+            AppKind::Notes => self.notes.render(&mut self.canvas, theme, cx, cy, cw, ch, focused, self.a11y.large_text),
             AppKind::Media => self.media.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::Paint => self.paint.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::Calculator => self.calculator.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::Clock => self.clock.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::Snake => self.snake.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::Doom => self.doom.render(&mut self.canvas, theme, cx, cy, cw, ch),
-            AppKind::Net => self.net_app.render(&mut self.canvas, theme, cx, cy, cw, ch),
+            AppKind::Net => self.net_app.render(&mut self.canvas, theme, cx, cy, cw, ch, self.a11y.large_text),
             AppKind::Snapshots => self.snapshots.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::SysMon => self.sysmon.render(&mut self.canvas, theme, cx, cy, cw, ch),
             AppKind::Settings => self.settings.render(
@@ -907,6 +1389,7 @@ impl DesktopCompositor {
                 theme,
                 self.theme_preset,
                 self.show_watermark,
+                self.a11y,
                 cx,
                 cy,
                 cw,
@@ -930,22 +1413,24 @@ impl DesktopCompositor {
             return;
         };
         let theme = self.theme();
+        let (cur_w, cur_h) = self.cursor_bounds();
         let ox = self.prev_cursor_x;
         let oy = self.prev_cursor_y;
-        self.restore_cursor_bg(ox, oy, 16, 22);
+        self.restore_cursor_bg(ox, oy, cur_w, cur_h);
 
         self.render_window_client(kind, theme, cx, cy, cw, ch, true);
         self.copy_rect_to_scene_cache(cx, cy, cw, ch);
 
         let nx = self.last_mouse_x;
         let ny = self.last_mouse_y;
-        self.canvas.draw_cursor(nx, ny, 0xF8FAFC);
+        let ccol = self.cursor_color();
+        self.canvas.draw_cursor_ex(nx, ny, ccol, self.a11y.large_cursor);
 
         if ox != nx || oy != ny {
-            self.fb.blit_rect(&self.canvas.buffer, ox, oy, 16, 22);
+            self.fb.blit_rect(&self.canvas.buffer, ox, oy, cur_w, cur_h);
         }
         self.fb.blit_rect(&self.canvas.buffer, cx, cy, cw, ch);
-        self.fb.blit_rect(&self.canvas.buffer, nx, ny, 16, 22);
+        self.fb.blit_rect(&self.canvas.buffer, nx, ny, cur_w, cur_h);
         self.prev_cursor_x = nx;
         self.prev_cursor_y = ny;
         self.cursor_dirty = false;
@@ -1003,12 +1488,24 @@ impl DesktopCompositor {
         if self.start_menu_open {
             self.draw_start_menu(theme);
         }
+        if self.a11y_menu_open {
+            self.draw_a11y_menu(theme);
+        }
 
         self.scene_cache.copy_from_slice(&self.canvas.buffer);
+        if self.a11y.magnifier {
+            let _ = self.canvas.draw_magnifier_lens(
+                &self.scene_cache,
+                self.last_mouse_x,
+                self.last_mouse_y,
+                theme.border_active,
+            );
+        }
         self.prev_cursor_x = self.last_mouse_x;
         self.prev_cursor_y = self.last_mouse_y;
+        let ccol = self.cursor_color();
         self.canvas
-            .draw_cursor(self.last_mouse_x, self.last_mouse_y, 0xF8FAFC);
+            .draw_cursor_ex(self.last_mouse_x, self.last_mouse_y, ccol, self.a11y.large_cursor);
     }
 
     fn draw_spotlight_search(&mut self, theme: ThemeColors) {
@@ -1064,7 +1561,7 @@ impl DesktopCompositor {
         // Top Emblem (pre-scaled once) + Version + SIP Sandbox Badge
         self.canvas
             .draw_rgba_slice(wx + 24, wy + 18, 76, 76, &self.widget_logo_rgba, 255);
-        self.canvas.draw_text_font(wx + 124, wy + 26, "AmbaOS v0.7.0", theme.text_primary, FontFace::UiBold);
+        self.canvas.draw_text_font(wx + 124, wy + 26, "AmbaOS v0.7.1", theme.text_primary, FontFace::UiBold);
         self.canvas.fill_rounded_rect(wx + 124, wy + 54, 152, 26, 13, 0x1E4D36);
         self.canvas.draw_rounded_rect_outline(wx + 124, wy + 54, 152, 26, 13, 0x2E7D54);
         self.canvas.draw_text_font(wx + 136, wy + 59, "SIP Sandbox Active", 0xA7F3D0, FontFace::UiBold);
@@ -1177,6 +1674,32 @@ impl DesktopCompositor {
         self.canvas.draw_rounded_rect_outline(nx, 3, nw, 22, 5, theme.border_inactive);
         self.canvas.draw_text_font(nx + 9, 5, &net_txt, net_col, FontFace::UiBold);
 
+        // Quick Accessibility & Shortcuts Pill (F1)
+        let (ax, aw, a_lbl) = self.topbar_a11y_pill_rect();
+        let any_a11y = self.a11y_menu_open
+            || self.theme_preset == ThemePreset::HighContrast
+            || self.a11y.large_cursor
+            || self.a11y.magnifier
+            || self.a11y.large_text
+            || self.a11y.mouse_keys
+            || self.a11y.sound_cues;
+        self.canvas.fill_rounded_rect(ax, 3, aw, 22, 5, if any_a11y { theme.accent } else { 0x1F2530 });
+        self.canvas.draw_rounded_rect_outline(
+            ax,
+            3,
+            aw,
+            22,
+            5,
+            if any_a11y { theme.accent_soft } else { theme.border_inactive },
+        );
+        self.canvas.draw_text_font(
+            ax + 9,
+            5,
+            a_lbl,
+            if any_a11y { 0xFFFFFF } else { theme.accent_sec },
+            FontFace::UiBold,
+        );
+
         // Right-side tray icons: Signal, Volume, Power
         let bar_col = if snap.dhcp_ready { theme.text_primary } else { theme.text_muted };
         let sx = w - 80;
@@ -1185,8 +1708,12 @@ impl DesktopCompositor {
         self.canvas.fill_rect(sx + 10, 8, 3, 12, bar_col);
 
         let vx = w - 54;
-        self.canvas.fill_rect(vx, 11, 5, 7, theme.text_secondary);
-        self.canvas.fill_rect(vx + 5, 8, 4, 13, theme.text_secondary);
+        let vcol = if audio::is_muted() { theme.err } else { theme.text_secondary };
+        self.canvas.fill_rect(vx, 11, 5, 7, vcol);
+        self.canvas.fill_rect(vx + 5, 8, 4, 13, vcol);
+        if audio::is_muted() {
+            self.canvas.draw_line(vx - 1, 8, vx + 11, 20, theme.err);
+        }
 
         self.canvas.fill_circle(w - 22, 14, 9, 0x1F2530);
         self.canvas.draw_rounded_rect_outline(w - 31, 5, 18, 18, 9, theme.border_inactive);
@@ -1277,16 +1804,31 @@ impl DesktopCompositor {
 
         self.canvas.fill_rounded_rect(sx + 8, sy + 8, sw - 16, 56, 8, theme.window_surface);
         self.canvas.draw_rgba_sprite(sx + 14, sy + 12, assets::logo_48(), 255);
-        self.canvas.draw_text_font(sx + 70, sy + 16, "AmbaOS v0.7.0", theme.text_primary, FontFace::UiBold);
-        self.canvas.draw_text_font(sx + 70, sy + 36, "15 Apps | PE32+/ELF64 | SIP + AmbaSnap", theme.accent_soft, FontFace::Ui);
+        self.canvas.draw_text_font(sx + 70, sy + 16, "AmbaOS v0.7.1", theme.text_primary, FontFace::UiBold);
+        self.canvas.draw_text_font(sx + 70, sy + 36, "15 Apps | PE32+/ELF64 | SIP + A11y", theme.accent_soft, FontFace::Ui);
 
         for (i, &kind) in AppKind::ALL.iter().enumerate() {
             let col = (i % 3) as i32;
             let row = (i / 3) as i32;
             let bx = sx + 10 + col * 150;
             let by = sy + 72 + row * 44;
-            self.canvas.fill_rounded_rect(bx, by, 144, 38, 8, theme.window_surface);
-            self.canvas.draw_rounded_rect_outline(bx, by, 144, 38, 8, theme.border_inactive);
+            let kb_sel = i == self.start_menu_idx;
+            self.canvas.fill_rounded_rect(
+                bx,
+                by,
+                144,
+                38,
+                8,
+                if kb_sel { theme.titlebar_active } else { theme.window_surface },
+            );
+            self.canvas.draw_rounded_rect_outline(
+                bx,
+                by,
+                144,
+                38,
+                8,
+                if kb_sel { theme.accent } else { theme.border_inactive },
+            );
             self.canvas.draw_text_clipped_font(bx + 10, by + 3, 128, kind.label(), theme.text_primary, FontFace::UiBold);
             self.canvas.draw_text_clipped_font(bx + 10, by + 19, 128, kind.subtitle(), theme.text_muted, FontFace::Ui);
         }
@@ -1297,5 +1839,49 @@ impl DesktopCompositor {
 
         self.canvas.fill_rounded_rect(sx + 237, sy + 302, 217, 34, 8, theme.accent);
         self.canvas.draw_text_font(sx + 308, sy + 310, "Shut Down", 0xFFFFFF, FontFace::UiBold);
+    }
+
+    fn draw_a11y_menu(&mut self, theme: ThemeColors) {
+        let (ax, ay, aw, ah) = self.a11y_menu_rect();
+        self.canvas.draw_soft_shadow(ax, ay, aw, ah, 12);
+        self.canvas.fill_rounded_rect(ax, ay, aw, ah, 12, theme.window_bg);
+        self.canvas.draw_rounded_rect_outline(ax, ay, aw, ah, 12, theme.border_active);
+
+        self.canvas.fill_rounded_rect(ax + 8, ay + 8, aw - 16, 28, 6, theme.window_surface);
+        self.canvas.draw_text_font(ax + 16, ay + 13, "Accessibility & Shortcuts (F1)", theme.accent_soft, FontFace::UiBold);
+
+        let toggles = [
+            ("[1] High Contrast (Alt+C)", self.theme_preset == ThemePreset::HighContrast),
+            ("[2] Large High-Vis Cursor 2x", self.a11y.large_cursor),
+            ("[3] Screen Magnifier 2x (Alt+Z)", self.a11y.magnifier),
+            ("[4] Readable Large Text (Alt+L)", self.a11y.large_text),
+            ("[5] Keyboard Mouse Keys (Alt+K)", self.a11y.mouse_keys),
+            ("[6] Audio Feedback Chimes", self.a11y.sound_cues),
+        ];
+
+        for (i, (lbl, on)) in toggles.iter().enumerate() {
+            let ry = ay + 44 + (i as i32) * 36;
+            self.canvas.fill_rounded_rect(ax + 12, ry, aw - 24, 30, 6, theme.window_surface);
+            self.canvas.draw_rounded_rect_outline(
+                ax + 12,
+                ry,
+                aw - 24,
+                30,
+                6,
+                if *on { theme.border_active } else { theme.border_inactive },
+            );
+            self.canvas.draw_text_clipped_font(ax + 22, ry + 7, aw - 92, lbl, theme.text_primary, FontFace::UiBold);
+            self.canvas.fill_rounded_rect(ax + aw - 62, ry + 5, 42, 20, 10, if *on { theme.accent } else { theme.titlebar_active });
+            self.canvas.draw_text_font(ax + aw - 51, ry + 7, if *on { "ON" } else { "OFF" }, 0xFFFFFF, FontFace::UiBold);
+        }
+
+        // Shortcut guide card
+        let gy = ay + 266;
+        self.canvas.fill_rounded_rect(ax + 12, gy, aw - 24, 50, 6, theme.term_bg);
+        self.canvas.draw_text_clipped_font(ax + 20, gy + 6, aw - 40, "Nav: Alt+Tab Switch | Ctrl+W Close | Alt+M Menu", theme.text_secondary, FontFace::Ui);
+        self.canvas.draw_text_clipped_font(ax + 20, gy + 26, aw - 40, "Ptr: Alt+Arrows Move | Alt+Enter Click | Ctrl+Spc", theme.accent_sec, FontFace::Ui);
+
+        self.canvas.fill_rounded_rect(ax + 12, ay + ah - 40, aw - 24, 30, 7, theme.accent);
+        self.canvas.draw_text_font(ax + 98, ay + ah - 33, "Open Full A11y Settings", 0xFFFFFF, FontFace::UiBold);
     }
 }

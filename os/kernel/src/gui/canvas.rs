@@ -475,6 +475,64 @@ impl Canvas {
         }
     }
 
+    pub fn draw_text_scaled_clipped_font(
+        &mut self,
+        x: i32,
+        y: i32,
+        max_w: i32,
+        text: &str,
+        rgb: u32,
+        face: FontFace,
+        large: bool,
+    ) {
+        if !large {
+            self.draw_text_clipped_font(x, y, max_w, text, rgb, face);
+            return;
+        }
+        if max_w <= 0 {
+            return;
+        }
+        let sr = (rgb >> 16) & 0xFF;
+        let sg = (rgb >> 8) & 0xFF;
+        let sb = rgb & 0xFF;
+        let limit_x = (x + max_w).min(self.width);
+        let mut cx = x;
+        for ch in text.chars() {
+            if ch == '\n' {
+                break;
+            }
+            if let Some(g) = font::glyph(face, ch) {
+                let adv = (g.advance * 3 + 1) / 2;
+                if cx + adv > limit_x {
+                    break;
+                }
+                let sw = (g.width * 3 + 1) / 2;
+                let sh = (g.height * 3 + 1) / 2;
+                let y_off = (g.y_offset * 3) / 2;
+                for dy in 0..sh {
+                    let py = y + y_off + dy;
+                    if py < 0 || py >= self.height {
+                        continue;
+                    }
+                    let sy = ((dy * 2) / 3).min(g.height - 1);
+                    let row_off = (sy as usize) * (g.width as usize);
+                    for dx in 0..sw {
+                        let px = cx + dx;
+                        if px >= limit_x {
+                            break;
+                        }
+                        let sx = ((dx * 2) / 3).min(g.width - 1);
+                        let alpha = g.alpha[row_off + (sx as usize)];
+                        if alpha > 0 {
+                            self.blend_pixel(px, py, sr, sg, sb, alpha);
+                        }
+                    }
+                }
+                cx += adv;
+            }
+        }
+    }
+
     pub fn draw_progress_bar(
         &mut self,
         x: i32,
@@ -608,6 +666,10 @@ impl Canvas {
     }
 
     pub fn draw_cursor(&mut self, x: i32, y: i32, accent_rgb: u32) {
+        self.draw_cursor_ex(x, y, accent_rgb, false);
+    }
+
+    pub fn draw_cursor_ex(&mut self, x: i32, y: i32, accent_rgb: u32, large: bool) {
         const CURSOR: [&str; 18] = [
             "W...........",
             "WW..........",
@@ -629,21 +691,89 @@ impl Canvas {
             "......WW....",
         ];
 
+        let scale = if large { 2 } else { 1 };
         let border = self.pack(0xFFFFFF);
         let fill = self.pack(accent_rgb);
         for (dy, row) in CURSOR.iter().enumerate() {
             for (dx, ch) in row.bytes().enumerate() {
-                let gx = x + dx as i32;
-                let gy = y + dy as i32;
-                match ch {
-                    b'W' => self.put_pixel_packed(gx, gy, border),
-                    b'B' => self.put_pixel_packed(gx, gy, fill),
-                    b'.' if dx > 0 && row.as_bytes().get(dx - 1) == Some(&b'W') => {
-                        self.blend_pixel(gx, gy, 0, 0, 0, 75);
+                for sy in 0..scale {
+                    for sx in 0..scale {
+                        let gx = x + (dx as i32) * scale + sx;
+                        let gy = y + (dy as i32) * scale + sy;
+                        match ch {
+                            b'W' => self.put_pixel_packed(gx, gy, border),
+                            b'B' => self.put_pixel_packed(gx, gy, fill),
+                            b'.' if dx > 0 && row.as_bytes().get(dx - 1) == Some(&b'W') => {
+                                self.blend_pixel(gx, gy, 0, 0, 0, 95);
+                            }
+                            _ => {}
+                        }
                     }
-                    _ => {}
                 }
             }
         }
+    }
+
+    pub fn draw_magnifier_lens(
+        &mut self,
+        src_buf: &[u32],
+        focus_x: i32,
+        focus_y: i32,
+        border_rgb: u32,
+    ) -> (i32, i32, i32, i32) {
+        let lens_w = 240i32;
+        let lens_h = 150i32;
+        let footer_h = 22i32;
+        let total_h = lens_h + footer_h;
+
+        // Place lens on opposite side of cursor so it never covers the inspected spot
+        let lx = if focus_x < self.width / 2 {
+            (focus_x + 36).min(self.width - lens_w - 14)
+        } else {
+            (focus_x - lens_w - 36).max(14)
+        };
+        let ly = if focus_y > self.height / 2 {
+            (focus_y - total_h - 24).max(36)
+        } else {
+            (focus_y + 28).min(self.height - total_h - 16)
+        };
+
+        self.draw_soft_shadow(lx, ly, lens_w, total_h, 8);
+
+        let src_w = lens_w / 2;
+        let src_h = lens_h / 2;
+        let sx0 = (focus_x - src_w / 2).clamp(0, (self.width - src_w).max(0));
+        let sy0 = (focus_y - src_h / 2).clamp(0, (self.height - src_h).max(0));
+        let stride = self.width as usize;
+
+        for dy in 0..lens_h {
+            let py = ly + dy;
+            if py < 0 || py >= self.height {
+                continue;
+            }
+            let sy = (sy0 + dy / 2).clamp(0, self.height - 1) as usize;
+            let dst_row = (py as usize) * stride;
+            let src_row = sy * stride;
+            for dx in 0..lens_w {
+                let px = lx + dx;
+                if px < 0 || px >= self.width {
+                    continue;
+                }
+                let sx = (sx0 + dx / 2).clamp(0, self.width - 1) as usize;
+                self.buffer[dst_row + (px as usize)] = src_buf[src_row + sx];
+            }
+        }
+
+        // Crosshair at zoomed focus spot
+        let cx = lx + (focus_x - sx0) * 2;
+        let cy = ly + (focus_y - sy0) * 2;
+        self.fill_rect(cx - 8, cy, 17, 1, border_rgb);
+        self.fill_rect(cx, cy - 8, 1, 17, border_rgb);
+
+        self.fill_rect(lx, ly + lens_h, lens_w, footer_h, 0x090C12);
+        self.draw_text_font(lx + 10, ly + lens_h + 3, "ZOOM 2x (Alt+Z to close)", 0xFACC15, FontFace::UiBold);
+        self.draw_rounded_rect_outline(lx - 1, ly - 1, lens_w + 2, total_h + 2, 4, border_rgb);
+
+        (lx - 2, ly - 2, lens_w + 8, total_h + 8)
     }
 }

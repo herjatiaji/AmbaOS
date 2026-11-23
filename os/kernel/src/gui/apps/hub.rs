@@ -87,6 +87,7 @@ pub struct HubApp {
     active_game: ActiveGame,
     dl_pct: u8,
     dl_active: bool,
+    last_dl_ms: u64,
     wizard: SetupWizard,
     banner_msg: String,
     // Embedded .ambv trailer preview
@@ -130,6 +131,7 @@ impl HubApp {
             active_game: ActiveGame::None,
             dl_pct: 82,
             dl_active: false,
+            last_dl_ms: 0,
             wizard: SetupWizard {
                 active: false,
                 pkg_idx: 2,
@@ -233,8 +235,52 @@ impl HubApp {
         self.inv_score = 0;
     }
 
-    pub fn is_playing_game(&self) -> bool {
-        self.active_game != ActiveGame::None
+    pub fn handle_menu_key(&mut self, ev: KeyEvent) -> (bool, HubAction) {
+        if self.active_game != ActiveGame::None {
+            return (self.handle_key(ev), HubAction::None);
+        }
+        if self.wizard.active {
+            match ev {
+                KeyEvent::Escape => {
+                    self.wizard.active = false;
+                    return (true, HubAction::None);
+                }
+                KeyEvent::Enter => {
+                    if !self.wizard.done {
+                        self.wizard.progress = 99;
+                        return (true, HubAction::None);
+                    } else {
+                        let id = CATALOG[self.wizard.pkg_idx].id;
+                        self.wizard.active = false;
+                        return (true, self.launch_by_id(id));
+                    }
+                }
+                _ => return (false, HubAction::None),
+            }
+        }
+        match ev {
+            KeyEvent::Char('1') => {
+                self.tab = HubTab::Store;
+                (true, HubAction::None)
+            }
+            KeyEvent::Char('2') => {
+                self.tab = HubTab::Library;
+                (true, HubAction::None)
+            }
+            KeyEvent::Char('3') => {
+                self.tab = HubTab::Downloads;
+                (true, HubAction::None)
+            }
+            KeyEvent::Tab => {
+                self.tab = match self.tab {
+                    HubTab::Store => HubTab::Library,
+                    HubTab::Library => HubTab::Downloads,
+                    HubTab::Downloads => HubTab::Store,
+                };
+                (true, HubAction::None)
+            }
+            _ => (false, HubAction::None),
+        }
     }
 
     pub fn handle_key(&mut self, ev: KeyEvent) -> bool {
@@ -414,11 +460,14 @@ impl HubApp {
         }
 
         if self.dl_active && self.dl_pct < 100 {
-            if now_ms.saturating_sub(self.last_trailer_ms) >= 90 {
+            if now_ms.saturating_sub(self.last_dl_ms) >= 90 {
+                self.last_dl_ms = now_ms;
                 self.dl_pct = (self.dl_pct + 6).min(100);
                 if self.dl_pct >= 100 {
                     self.dl_active = false;
-                    let _ = loader::install_package("invaders", "Invaders Setup", false);
+                    if !loader::app_installed("invaders") {
+                        let _ = loader::install_package("invaders", "Invaders Setup", false);
+                    }
                     self.banner_msg = String::from("invaders_setup.exe installed to /apps/invaders/");
                 }
                 dirty = true;
@@ -643,8 +692,7 @@ impl HubApp {
                                 _ => {
                                     if loader::app_installed("invaders") {
                                         self.start_invaders();
-                                    } else if !self.dl_active {
-                                        self.dl_active = true;
+                                    } else {
                                         self.open_install_wizard(2);
                                     }
                                     return (true, HubAction::None);

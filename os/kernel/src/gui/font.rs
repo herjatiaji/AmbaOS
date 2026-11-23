@@ -75,13 +75,17 @@ pub fn glyph(face: FontFace, ch: char) -> Option<GlyphData<'static>> {
 }
 
 pub fn measure_text(face: FontFace, text: &str) -> i32 {
+    measure_text_scaled(face, text, false)
+}
+
+pub fn measure_text_scaled(face: FontFace, text: &str, large: bool) -> i32 {
     let mut w = 0i32;
     for ch in text.chars() {
         if ch == '\n' {
             break;
         }
         if let Some(g) = glyph(face, ch) {
-            w += g.advance;
+            w += if large { (g.advance * 3 + 1) / 2 } else { g.advance };
         }
     }
     w

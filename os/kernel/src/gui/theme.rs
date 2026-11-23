@@ -4,14 +4,16 @@ pub enum ThemePreset {
     MidnightIndigo,
     CyberEmerald,
     PitchDark,
+    HighContrast,
 }
 
 impl ThemePreset {
-    pub const ALL: [ThemePreset; 4] = [
+    pub const ALL: [ThemePreset; 5] = [
         ThemePreset::ObsidianEmber,
         ThemePreset::MidnightIndigo,
         ThemePreset::CyberEmerald,
         ThemePreset::PitchDark,
+        ThemePreset::HighContrast,
     ];
 
     pub fn name(self) -> &'static str {
@@ -20,6 +22,7 @@ impl ThemePreset {
             ThemePreset::MidnightIndigo => "Midnight Indigo",
             ThemePreset::CyberEmerald => "Cyber Emerald",
             ThemePreset::PitchDark => "Pitch Dark",
+            ThemePreset::HighContrast => "High Contrast (A11y)",
         }
     }
 
@@ -29,6 +32,7 @@ impl ThemePreset {
             ThemePreset::MidnightIndigo => "Deep violet-blue workspace",
             ThemePreset::CyberEmerald => "Clean slate with neon mint",
             ThemePreset::PitchDark => "Pure OLED charcoal minimal",
+            ThemePreset::HighContrast => "Max contrast black/white/yellow (WCAG AAA)",
         }
     }
 
@@ -38,6 +42,7 @@ impl ThemePreset {
             ThemePreset::MidnightIndigo => 1,
             ThemePreset::CyberEmerald => 2,
             ThemePreset::PitchDark => 3,
+            ThemePreset::HighContrast => 4,
         }
     }
 
@@ -46,6 +51,7 @@ impl ThemePreset {
             1 => ThemePreset::MidnightIndigo,
             2 => ThemePreset::CyberEmerald,
             3 => ThemePreset::PitchDark,
+            4 => ThemePreset::HighContrast,
             _ => ThemePreset::ObsidianEmber,
         }
     }
@@ -144,6 +150,29 @@ impl ThemePreset {
                 term_green: 0x4ADE80,
                 err: 0xF87171,
             },
+            ThemePreset::HighContrast => ThemeColors {
+                bg_top: 0x000000,
+                bg_bottom: 0x050608,
+                bg_glow: 0xFACC15,
+                topbar_bg: 0x000000,
+                dock_bg: 0x080A10,
+                window_bg: 0x000000,
+                window_surface: 0x121620,
+                titlebar_active: 0x1D283A,
+                titlebar_inactive: 0x0B0E14,
+                border_active: 0xFACC15,
+                border_inactive: 0xCBD5E1,
+                accent: 0x1D4ED8,
+                accent_soft: 0xFACC15,
+                accent_sec: 0x22D3EE,
+                text_primary: 0xFFFFFF,
+                text_secondary: 0xF8FAFC,
+                text_muted: 0xE2E8F0,
+                term_bg: 0x000000,
+                term_prompt: 0xFACC15,
+                term_green: 0x4ADE80,
+                err: 0xFF6B6B,
+            },
         }
     }
 }
@@ -176,3 +205,12 @@ pub struct ThemeColors {
 pub const BTN_CLOSE: u32 = 0xFF5F56;
 pub const BTN_MIN: u32 = 0xFFBD2E;
 pub const BTN_MAX: u32 = 0x27C93F;
+
+#[derive(Clone, Copy, Default)]
+pub struct AccessibilityConfig {
+    pub large_cursor: bool,
+    pub magnifier: bool,
+    pub large_text: bool,
+    pub mouse_keys: bool,
+    pub sound_cues: bool,
+}

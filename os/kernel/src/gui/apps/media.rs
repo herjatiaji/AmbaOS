@@ -3,6 +3,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::drivers::audio;
+use crate::drivers::keyboard::KeyEvent;
 use crate::gui::assets;
 use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
@@ -443,6 +444,111 @@ impl MediaApp {
         }
 
         redraw
+    }
+
+    pub fn handle_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
+        match ev {
+            KeyEvent::Char('1') => {
+                self.tab = MediaTab::Video;
+                return true;
+            }
+            KeyEvent::Char('2') => {
+                self.tab = MediaTab::Music;
+                return true;
+            }
+            KeyEvent::Char('3') => {
+                self.tab = MediaTab::Gallery;
+                return true;
+            }
+            KeyEvent::Tab => {
+                self.tab = match self.tab {
+                    MediaTab::Video => MediaTab::Music,
+                    MediaTab::Music => MediaTab::Gallery,
+                    MediaTab::Gallery => MediaTab::Video,
+                };
+                return true;
+            }
+            KeyEvent::Char(' ') => {
+                match self.tab {
+                    MediaTab::Video => self.video_playing = !self.video_playing,
+                    MediaTab::Music => {
+                        if self.playing {
+                            self.playing = false;
+                            audio::stop();
+                        } else {
+                            self.start_playing(now_ms);
+                        }
+                    }
+                    MediaTab::Gallery => {
+                        self.backdrop = match self.backdrop {
+                            GalleryBackdrop::DarkGlass => GalleryBackdrop::WarmEmber,
+                            GalleryBackdrop::WarmEmber => GalleryBackdrop::LightCard,
+                            GalleryBackdrop::LightCard => GalleryBackdrop::DarkGlass,
+                        };
+                    }
+                }
+                return true;
+            }
+            KeyEvent::Left => {
+                match self.tab {
+                    MediaTab::Video => {
+                        self.clip_idx = (self.clip_idx + VIDEO_CLIPS.len() - 1) % VIDEO_CLIPS.len();
+                        self.video_frame = 0;
+                    }
+                    MediaTab::Music => {
+                        self.track_idx = (self.track_idx + TRACKS.len() - 1) % TRACKS.len();
+                        self.note_idx = 0;
+                        if self.playing {
+                            self.start_playing(now_ms);
+                        }
+                    }
+                    MediaTab::Gallery => {}
+                }
+                return true;
+            }
+            KeyEvent::Right => {
+                match self.tab {
+                    MediaTab::Video => {
+                        self.clip_idx = (self.clip_idx + 1) % VIDEO_CLIPS.len();
+                        self.video_frame = 0;
+                    }
+                    MediaTab::Music => {
+                        self.track_idx = (self.track_idx + 1) % TRACKS.len();
+                        self.note_idx = 0;
+                        if self.playing {
+                            self.start_playing(now_ms);
+                        }
+                    }
+                    MediaTab::Gallery => {}
+                }
+                return true;
+            }
+            KeyEvent::Char('m') | KeyEvent::Char('M') => {
+                audio::set_muted(!audio::is_muted());
+                if self.playing && !audio::is_muted() {
+                    let f = TRACKS[self.track_idx].notes[self.note_idx].freq;
+                    audio::play_freq(f);
+                }
+                return true;
+            }
+            KeyEvent::Char('h') | KeyEvent::Char('H') if self.tab == MediaTab::Video => {
+                self.npu_hdr = !self.npu_hdr;
+                if self.npu_hdr {
+                    let _ = compute::schedule_npu_dag();
+                }
+                render_trailer_frame(
+                    &mut self.frame_buf,
+                    VIDEO_W,
+                    VIDEO_H,
+                    self.clip_idx,
+                    self.video_frame,
+                    self.npu_hdr,
+                );
+                return true;
+            }
+            _ => {}
+        }
+        false
     }
 
     pub fn handle_click(&mut self, lx: i32, ly: i32, cw: i32, now_ms: u64) -> bool {

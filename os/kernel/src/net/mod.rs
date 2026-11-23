@@ -423,6 +423,7 @@ pub fn start_browser_navigate_mode(raw_input: &str, visual: bool, vw: i32, vh: i
 
     if trimmed.is_empty() || trimmed == "amba://home" {
         s.sockets.get_mut::<tcp::Socket>(s.tcp_handle).abort();
+        s.gw_keepalive_ready = false;
         s.http_job = None;
         s.http_view = HttpViewState {
             loading: false,
@@ -930,6 +931,7 @@ pub fn poll(now_ms: u64) -> bool {
                                 Err(e) => {
                                     s.http_view.loading = false;
                                     s.http_view.status = String::from("Connect Failed");
+                                    s.http_view.title = String::from("Connection Failed");
                                     s.http_view.blocks = vec![PageBlock::Paragraph(format!(
                                         "TCP connect error: {:?}",
                                         e

@@ -2,6 +2,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::drivers::keyboard::KeyEvent;
 use crate::fs::vfs::{self, Partition};
 use crate::gui::canvas::Canvas;
 use crate::gui::font::FontFace;
@@ -33,6 +34,65 @@ impl FileViewerApp {
         }
     }
 
+    pub fn handle_wheel(&mut self, dz: i32) -> bool {
+        let count = vfs::file_count();
+        if count == 0 || dz == 0 {
+            return false;
+        }
+        if dz > 0 {
+            self.selected = (self.selected + 1).min(count - 1);
+        } else {
+            self.selected = self.selected.saturating_sub(1);
+        }
+        if self.selected < self.scroll_row {
+            self.scroll_row = self.selected;
+        }
+        true
+    }
+
+    pub fn handle_key(&mut self, ev: KeyEvent) -> (bool, FileAction) {
+        let count = vfs::file_count();
+        if count == 0 {
+            return (false, FileAction::None);
+        }
+        match ev {
+            KeyEvent::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                if self.selected < self.scroll_row {
+                    self.scroll_row = self.selected;
+                }
+                (true, FileAction::None)
+            }
+            KeyEvent::Down => {
+                self.selected = (self.selected + 1).min(count - 1);
+                if self.selected >= self.scroll_row + 12 {
+                    self.scroll_row = self.selected.saturating_sub(11);
+                }
+                (true, FileAction::None)
+            }
+            KeyEvent::Home => {
+                self.selected = 0;
+                self.scroll_row = 0;
+                (true, FileAction::None)
+            }
+            KeyEvent::End => {
+                self.selected = count - 1;
+                self.scroll_row = count.saturating_sub(12);
+                (true, FileAction::None)
+            }
+            KeyEvent::Enter => {
+                let files = vfs::list_entries();
+                if let Some((path, _, _)) = files.get(self.selected) {
+                    if path.ends_with(".exe") || path.ends_with(".elf") || path.ends_with(".ambv") {
+                        return (true, FileAction::LaunchBinary(path.clone()));
+                    }
+                }
+                (false, FileAction::None)
+            }
+            _ => (false, FileAction::None),
+        }
+    }
+
     pub fn handle_click(&mut self, local_x: i32, local_y: i32, cw: i32, ch: i32) -> (bool, FileAction) {
         let split_x = (cw * 40) / 100;
         if local_x >= 8 && local_x < split_x && local_y >= 36 {
@@ -56,7 +116,7 @@ impl FileViewerApp {
         (false, FileAction::None)
     }
 
-    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32) {
+    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32, large_text: bool) {
         canvas.fill_rect(cx, cy, cw, ch, theme.window_bg);
 
         let files = vfs::list_entries();
@@ -139,15 +199,17 @@ impl FileViewerApp {
                     canvas.draw_text_font(rx + 18, cy + ch - 39, "Run Executable in SIP Sandbox", 0xFFFFFF, FontFace::UiBold);
                 } else {
                     let text = core::str::from_utf8(&bytes).unwrap_or("[binary data]");
-                    let max_cols = ((rw - 8) / 8).max(16) as usize;
+                    let col_div = if large_text { 12 } else { 8 };
+                    let line_step = if large_text { 26 } else { 19 };
+                    let max_cols = ((rw - 8) / col_div).max(12) as usize;
                     let lines = wrap_lines(text, max_cols);
                     let mut ty = cy + 68;
                     for line in lines {
-                        if ty + 18 > cy + ch - 6 {
+                        if ty + line_step > cy + ch - 6 {
                             break;
                         }
-                        canvas.draw_text_clipped_font(rx, ty, rw, &line, theme.text_secondary, FontFace::Mono);
-                        ty += 19;
+                        canvas.draw_text_scaled_clipped_font(rx, ty, rw, &line, theme.text_secondary, FontFace::Mono, large_text);
+                        ty += line_step;
                     }
                 }
             }

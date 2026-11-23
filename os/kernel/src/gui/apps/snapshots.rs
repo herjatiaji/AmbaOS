@@ -1,6 +1,7 @@
 use alloc::format;
 use alloc::string::String;
 
+use crate::drivers::keyboard::KeyEvent;
 use crate::fs::snapshot::{self, GenHealth};
 use crate::gui::canvas::Canvas;
 use crate::gui::font::{self, FontFace};
@@ -27,6 +28,86 @@ impl SnapshotsApp {
             selected_gen: sum.active_gen,
             status_msg: String::from("Immutable Core OS active. All changes create atomic snapshots."),
             status_err: false,
+        }
+    }
+
+    pub fn handle_wheel(&mut self, dz: i32) -> bool {
+        let sum = snapshot::summary();
+        if sum.generations.is_empty() || dz == 0 {
+            return false;
+        }
+        let pos = sum.generations.iter().rposition(|g| g.id == self.selected_gen).unwrap_or(0);
+        let max_idx = sum.generations.len().min(5).saturating_sub(1);
+        let next = if dz > 0 {
+            (pos + 1).min(max_idx)
+        } else {
+            pos.saturating_sub(1)
+        };
+        let rev_idx = sum.generations.len() - 1 - next;
+        self.selected_gen = sum.generations[rev_idx].id;
+        true
+    }
+
+    pub fn handle_key(
+        &mut self,
+        ev: KeyEvent,
+        theme_idx: u8,
+        show_watermark: bool,
+    ) -> (bool, SnapAction) {
+        let sum = snapshot::summary();
+        if sum.generations.is_empty() {
+            return (false, SnapAction::None);
+        }
+        let pos = sum.generations.iter().rposition(|g| g.id == self.selected_gen).unwrap_or(0);
+        let max_idx = sum.generations.len().min(5).saturating_sub(1);
+
+        match ev {
+            KeyEvent::Up => {
+                let next = pos.saturating_sub(1);
+                self.selected_gen = sum.generations[sum.generations.len() - 1 - next].id;
+                self.status_msg = format!("Selected Gen #{}", self.selected_gen);
+                self.status_err = false;
+                (true, SnapAction::None)
+            }
+            KeyEvent::Down => {
+                let next = (pos + 1).min(max_idx);
+                self.selected_gen = sum.generations[sum.generations.len() - 1 - next].id;
+                self.status_msg = format!("Selected Gen #{}", self.selected_gen);
+                self.status_err = false;
+                (true, SnapAction::None)
+            }
+            KeyEvent::Enter => {
+                if let Err(e) = caps::check(AppId::Snapshots, CAP_CORE_ADMIN) {
+                    self.status_msg = String::from(e);
+                    self.status_err = true;
+                    return (true, SnapAction::None);
+                }
+                match snapshot::rollback_live(self.selected_gen) {
+                    Ok((t_idx, wm)) => {
+                        self.status_msg = format!("Rolled back Core OS live to Gen #{}", self.selected_gen);
+                        self.status_err = false;
+                        (true, SnapAction::ConfigRestored(t_idx, wm))
+                    }
+                    Err(e) => {
+                        self.status_msg = String::from(e);
+                        self.status_err = true;
+                        (true, SnapAction::None)
+                    }
+                }
+            }
+            KeyEvent::Char('c') | KeyEvent::Char('C') => {
+                if let Err(e) = caps::check(AppId::Snapshots, CAP_CORE_ADMIN) {
+                    self.status_msg = String::from(e);
+                    self.status_err = true;
+                    return (true, SnapAction::None);
+                }
+                let id = snapshot::create_snapshot("", theme_idx, show_watermark);
+                self.selected_gen = id;
+                self.status_msg = format!("Created CoW Snapshot Gen #{}", id);
+                self.status_err = false;
+                (true, SnapAction::None)
+            }
+            _ => (false, SnapAction::None),
         }
     }
 

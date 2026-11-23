@@ -37,11 +37,13 @@ pub enum TermAction {
     BrowseUrl(String),
     LaunchGame(String),
     RefreshTheme,
+    ToggleA11y(&'static str),
 }
 
 pub struct TerminalApp {
     lines: Vec<TermLine>,
     input: String,
+    scroll_offset: usize,
     fb_w: usize,
     fb_h: usize,
 }
@@ -51,6 +53,7 @@ impl TerminalApp {
         let mut app = Self {
             lines: Vec::new(),
             input: String::new(),
+            scroll_offset: 0,
             fb_w,
             fb_h,
         };
@@ -70,6 +73,19 @@ impl TerminalApp {
             let excess = self.lines.len() - 240;
             self.lines.drain(0..excess);
         }
+        self.scroll_offset = 0;
+    }
+
+    pub fn handle_wheel(&mut self, dz: i32) -> bool {
+        if dz == 0 || self.lines.is_empty() {
+            return false;
+        }
+        if dz < 0 {
+            self.scroll_offset = (self.scroll_offset + 3).min(self.lines.len().saturating_sub(1));
+        } else {
+            self.scroll_offset = self.scroll_offset.saturating_sub(3);
+        }
+        true
     }
 
     pub fn push_external_lines(&mut self, msgs: Vec<String>) -> bool {
@@ -110,6 +126,18 @@ impl TerminalApp {
                 let action = self.exec_command(&cmd_line);
                 (true, action)
             }
+            KeyEvent::PageUp => {
+                self.scroll_offset = (self.scroll_offset + 5).min(self.lines.len().saturating_sub(1));
+                (true, TermAction::None)
+            }
+            KeyEvent::PageDown => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(5);
+                (true, TermAction::None)
+            }
+            KeyEvent::End => {
+                self.scroll_offset = 0;
+                (true, TermAction::None)
+            }
             _ => (false, TermAction::None),
         }
     }
@@ -145,6 +173,7 @@ impl TerminalApp {
                 self.push("  ip / ping / dns    E1000 status, Ping, & DNS lookup", TermLineKind::Normal);
                 self.push("  ls / cat / write   Initramfs VFS (Core RO / User RW)", TermLineKind::Normal);
                 self.push("  date / mem / ps    RTC, RAM/Heap, & Kernel Tasks", TermLineKind::Normal);
+                self.push("  a11y [feat]        Toggle contrast|cursor|zoom|text|mousekeys|sound", TermLineKind::Normal);
                 self.push("  open <app>         doom|net|snap|media|paint|files|notes|calc|clock|snake|sysmon|settings|about", TermLineKind::Normal);
                 self.push("  clear / reboot / shutdown", TermLineKind::Normal);
             }
@@ -567,8 +596,8 @@ impl TerminalApp {
                 self.push("  / ___ \\| | | | | | |_) | (_| | |_| |___) |", TermLineKind::Secondary);
                 self.push(" /_/   \\_\\_| |_| |_|_.__/ \\__,_|\\___/|____/ ", TermLineKind::Secondary);
                 self.push(" -------------------------------------------", TermLineKind::Muted);
-                self.push(" OS          : AmbaOS v0.5.0 (x86_64 Rust #![no_std])", TermLineKind::Normal);
-                self.push(" Desktop     : AmbaDE Glass Compositor (13 Apps + AmbaBrowser)", TermLineKind::Normal);
+                self.push(" OS          : AmbaOS v0.7.1 (x86_64 Rust #![no_std])", TermLineKind::Normal);
+                self.push(" Desktop     : AmbaDE Clean Compositor (15 Apps + A11y Suite)", TermLineKind::Normal);
                 self.push(format!(" Display     : {}x{} 32-bpp ARGB", self.fb_w, self.fb_h), TermLineKind::Normal);
                 self.push(
                     format!(
@@ -602,6 +631,38 @@ impl TerminalApp {
                     TermLineKind::Error,
                 ),
             },
+            "a11y" => match arg {
+                "contrast" | "hc" => {
+                    self.push("[A11y] Toggled High Contrast theme", TermLineKind::Accent);
+                    return TermAction::ToggleA11y("contrast");
+                }
+                "cursor" => {
+                    self.push("[A11y] Toggled Large High-Vis Cursor (2x)", TermLineKind::Accent);
+                    return TermAction::ToggleA11y("cursor");
+                }
+                "zoom" | "magnifier" => {
+                    self.push("[A11y] Toggled Screen Magnifier Lens (2x)", TermLineKind::Accent);
+                    return TermAction::ToggleA11y("zoom");
+                }
+                "text" | "large" => {
+                    self.push("[A11y] Toggled Readable Large Text (1.5x)", TermLineKind::Accent);
+                    return TermAction::ToggleA11y("text");
+                }
+                "mousekeys" | "mouse" => {
+                    self.push("[A11y] Toggled Keyboard Mouse Keys (Arrows + Enter)", TermLineKind::Accent);
+                    return TermAction::ToggleA11y("mousekeys");
+                }
+                "sound" | "audio" => {
+                    self.push("[A11y] Toggled Audio Feedback Chimes", TermLineKind::Accent);
+                    return TermAction::ToggleA11y("sound");
+                }
+                _ => {
+                    self.push("Accessibility Suite Shortcuts:", TermLineKind::Accent);
+                    self.push("  Alt+C : High Contrast | Alt+Z : Zoom 2x | Alt+L : Large Text", TermLineKind::Normal);
+                    self.push("  Alt+K : Mouse Keys    | Alt+Tab: Next Win| F1 : A11y Panel", TermLineKind::Normal);
+                    return TermAction::ToggleA11y("panel");
+                }
+            },
             "reboot" => power::reboot(),
             "shutdown" => power::shutdown(),
             _ => {
@@ -614,18 +675,19 @@ impl TerminalApp {
         TermAction::None
     }
 
-    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32, focused: bool) {
+    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32, focused: bool, large_text: bool) {
         canvas.fill_rect(cx, cy, cw, ch, theme.term_bg);
 
         let pad_x = cx + 12;
         let pad_y = cy + 8;
-        let line_h = font::line_height(FontFace::Mono).max(18);
+        let line_h = if large_text { 26 } else { font::line_height(FontFace::Mono).max(18) };
         let max_rows = ((ch - 14) / line_h).max(1) as usize;
         let history_rows = max_rows.saturating_sub(1);
-        let start_idx = self.lines.len().saturating_sub(history_rows);
+        let end_idx = self.lines.len().saturating_sub(self.scroll_offset);
+        let start_idx = end_idx.saturating_sub(history_rows);
 
         let mut y = pad_y;
-        for line in &self.lines[start_idx..] {
+        for line in &self.lines[start_idx..end_idx] {
             let color = match line.kind {
                 TermLineKind::Normal => theme.text_secondary,
                 TermLineKind::Accent => theme.accent,
@@ -634,20 +696,20 @@ impl TerminalApp {
                 TermLineKind::Muted => theme.text_muted,
                 TermLineKind::Error => theme.err,
             };
-            canvas.draw_text_clipped_font(pad_x, y, cw - 24, &line.text, color, FontFace::Mono);
+            canvas.draw_text_scaled_clipped_font(pad_x, y, cw - 24, &line.text, color, FontFace::Mono, large_text);
             y += line_h;
         }
 
         let prompt = "aji@AmbaOS:~$ ";
-        canvas.draw_text_clipped_font(pad_x, y, cw - 24, prompt, theme.term_prompt, FontFace::Mono);
-        let prompt_w = font::measure_text(FontFace::Mono, prompt);
+        canvas.draw_text_scaled_clipped_font(pad_x, y, cw - 24, prompt, theme.term_prompt, FontFace::Mono, large_text);
+        let prompt_w = font::measure_text_scaled(FontFace::Mono, prompt, large_text);
         let input_x = pad_x + prompt_w;
-        canvas.draw_text_clipped_font(input_x, y, cw - 32 - prompt_w, &self.input, theme.text_primary, FontFace::Mono);
+        canvas.draw_text_scaled_clipped_font(input_x, y, cw - 32 - prompt_w, &self.input, theme.text_primary, FontFace::Mono, large_text);
 
-        let cursor_x = input_x + font::measure_text(FontFace::Mono, &self.input);
+        let cursor_x = input_x + font::measure_text_scaled(FontFace::Mono, &self.input, large_text);
         if cursor_x + 8 < cx + cw - 8 {
             let ccol = if focused { theme.accent } else { theme.text_muted };
-            canvas.fill_rect(cursor_x + 1, y + 2, 8, 15, ccol);
+            canvas.fill_rect(cursor_x + 1, y + 2, if large_text { 10 } else { 8 }, if large_text { 21 } else { 15 }, ccol);
         }
     }
 }

@@ -274,6 +274,22 @@ impl NetApp {
             return false;
         }
         let state = net::http_state();
+        if ev == KeyEvent::CtrlChar('l') {
+            self.url_focused = true;
+            if state.url != "amba://home" && !state.url.is_empty() {
+                self.omnibox = state.url;
+            }
+            return true;
+        }
+        if let KeyEvent::AltChar(c @ '1'..='6') = ev {
+            if state.url == "amba://home" {
+                let idx = (c as usize) - ('1' as usize);
+                if let Some(&(_, _, url)) = SPEED_DIAL.get(idx) {
+                    self.navigate_to(url);
+                    return true;
+                }
+            }
+        }
         if self.url_focused {
             return match ev {
                 KeyEvent::Char(ch) if ch.is_ascii() && !ch.is_ascii_control() => {
@@ -292,21 +308,40 @@ impl NetApp {
                     self.omnibox.clear();
                     true
                 }
+                KeyEvent::Tab => {
+                    self.url_focused = false;
+                    true
+                }
                 KeyEvent::Enter => {
                     let target = self.omnibox.clone();
                     self.navigate_to(&target);
                     true
                 }
-                KeyEvent::Down => {
-                    self.scroll_y = self.scroll_y.saturating_add(3);
+                KeyEvent::Down | KeyEvent::PageDown => {
+                    if state.url == "amba://home" {
+                        self.url_focused = false;
+                    } else {
+                        self.scroll_y = self.scroll_y.saturating_add(6);
+                    }
                     true
                 }
-                KeyEvent::Up => {
-                    self.scroll_y = self.scroll_y.saturating_sub(3);
+                KeyEvent::Up | KeyEvent::PageUp => {
+                    self.scroll_y = self.scroll_y.saturating_sub(6);
                     true
                 }
                 _ => false,
             };
+        }
+
+        // Speed Dial quick launch when url_focused == false at home
+        if state.url == "amba://home" {
+            if let KeyEvent::Char(c @ '1'..='6') = ev {
+                let idx = (c as usize) - ('1' as usize);
+                if let Some(&(_, _, url)) = SPEED_DIAL.get(idx) {
+                    self.navigate_to(url);
+                    return true;
+                }
+            }
         }
 
         // Viewport / HTML input focused in Visual Mode
@@ -366,25 +401,33 @@ impl NetApp {
                     }
                     true
                 }
-                KeyEvent::Down => {
+                KeyEvent::Down | KeyEvent::PageDown => {
                     if !state.loading {
                         let inp = state.frame.as_ref().map(|f| f.input_focused).unwrap_or(false);
-                        if inp {
+                        let step = if matches!(ev, KeyEvent::PageDown) { 380 } else { 180 };
+                        if inp && matches!(ev, KeyEvent::Down) {
                             net::start_browser_key("ArrowDown", "", self.last_vw, self.last_vh);
                         } else {
-                            net::start_browser_scroll(180, None, self.last_vw, self.last_vh);
+                            net::start_browser_scroll(step, None, self.last_vw, self.last_vh);
                         }
                     }
                     true
                 }
-                KeyEvent::Up => {
+                KeyEvent::Up | KeyEvent::PageUp => {
                     if !state.loading {
                         let inp = state.frame.as_ref().map(|f| f.input_focused).unwrap_or(false);
-                        if inp {
+                        let step = if matches!(ev, KeyEvent::PageUp) { -380 } else { -180 };
+                        if inp && matches!(ev, KeyEvent::Up) {
                             net::start_browser_key("ArrowUp", "", self.last_vw, self.last_vh);
                         } else {
-                            net::start_browser_scroll(-180, None, self.last_vw, self.last_vh);
+                            net::start_browser_scroll(step, None, self.last_vw, self.last_vh);
                         }
+                    }
+                    true
+                }
+                KeyEvent::Home => {
+                    if !state.loading {
+                        net::start_browser_scroll(0, Some(0), self.last_vw, self.last_vh);
                     }
                     true
                 }
@@ -403,6 +446,18 @@ impl NetApp {
             }
             KeyEvent::Up => {
                 self.scroll_y = self.scroll_y.saturating_sub(3);
+                true
+            }
+            KeyEvent::PageDown => {
+                self.scroll_y = self.scroll_y.saturating_add(12);
+                true
+            }
+            KeyEvent::PageUp => {
+                self.scroll_y = self.scroll_y.saturating_sub(12);
+                true
+            }
+            KeyEvent::Home => {
+                self.scroll_y = 0;
                 true
             }
             _ => false,
@@ -584,7 +639,7 @@ impl NetApp {
         false
     }
 
-    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32) {
+    pub fn render(&self, canvas: &mut Canvas, theme: ThemeColors, cx: i32, cy: i32, cw: i32, ch: i32, large_text: bool) {
         canvas.fill_rect(cx, cy, cw, ch, theme.window_bg);
 
         let snap = net::snapshot();
@@ -682,7 +737,7 @@ impl NetApp {
         canvas.draw_text_font(cx + cw - 106, cy + 12, badge_txt, badge_col, FontFace::UiBold);
 
         match self.tab {
-            NetTab::Browser => self.render_browser(canvas, theme, &state, cx, cy, cw, ch),
+            NetTab::Browser => self.render_browser(canvas, theme, &state, cx, cy, cw, ch, large_text),
             NetTab::Tools => self.render_tools(canvas, theme, snap, cx, cy, cw, ch),
         }
     }
@@ -696,6 +751,7 @@ impl NetApp {
         cy: i32,
         cw: i32,
         ch: i32,
+        large_text: bool,
     ) {
         // Navigation buttons (< > R H)
         let in_visual_page = self.visual_mode && state.url != "amba://home";
@@ -801,41 +857,43 @@ impl NetApp {
                 canvas.fill_rect(vx + 1, vy + 1, (vw - 2) / 2, 3, theme.accent);
             }
         } else {
-            let rows = build_rendered_rows(state, vw - 28);
+            let wrap_w = if large_text { ((vw - 28) * 2) / 3 } else { vw - 28 };
+            let rows = build_rendered_rows(state, wrap_w);
             total_rows = rows.len().max(1);
             link_count = rows.iter().filter(|r| r.link_url.is_some()).count();
 
-            let max_vis = ((vh - 18) / ROW_H).max(1) as usize;
+            let row_h = if large_text { 29 } else { ROW_H };
+            let max_vis = ((vh - 18) / row_h).max(1) as usize;
             let start = self.scroll_y.min(total_rows.saturating_sub(1));
             let mut ry = vy + 10;
 
             for row in rows.iter().skip(start).take(max_vis) {
                 match row.style {
                     RowStyle::H1 => {
-                        canvas.draw_text_clipped_font(vx + 14, ry, vw - 28, &row.text, theme.accent_soft, FontFace::UiBold);
-                        canvas.fill_rect(vx + 14, ry + 18, (vw - 28).min(360), 1, theme.accent);
+                        canvas.draw_text_scaled_clipped_font(vx + 14, ry, vw - 28, &row.text, theme.accent_soft, FontFace::UiBold, large_text);
+                        canvas.fill_rect(vx + 14, ry + row_h - 4, (vw - 28).min(360), 1, theme.accent);
                     }
                     RowStyle::H2 => {
-                        canvas.draw_text_clipped_font(vx + 14, ry, vw - 28, &row.text, theme.accent_sec, FontFace::UiBold);
+                        canvas.draw_text_scaled_clipped_font(vx + 14, ry, vw - 28, &row.text, theme.accent_sec, FontFace::UiBold, large_text);
                     }
                     RowStyle::Text => {
-                        canvas.draw_text_clipped_font(vx + 14, ry, vw - 28, &row.text, theme.text_secondary, FontFace::Ui);
+                        canvas.draw_text_scaled_clipped_font(vx + 14, ry, vw - 28, &row.text, theme.text_secondary, FontFace::Ui, large_text);
                     }
                     RowStyle::Bullet => {
-                        canvas.fill_circle(vx + 20, ry + 9, 2, theme.accent);
-                        canvas.draw_text_clipped_font(vx + 28, ry, vw - 42, &row.text, theme.text_secondary, FontFace::Ui);
+                        canvas.fill_circle(vx + 20, ry + row_h / 2, 2, theme.accent);
+                        canvas.draw_text_scaled_clipped_font(vx + 28, ry, vw - 42, &row.text, theme.text_secondary, FontFace::Ui, large_text);
                     }
                     RowStyle::Link => {
-                        canvas.draw_text_clipped_font(vx + 16, ry, vw - 32, &row.text, 0x38BDF8, FontFace::UiBold);
-                        let lw = font::measure_text(FontFace::UiBold, &row.text).min(vw - 32);
-                        canvas.fill_rect(vx + 16, ry + 17, lw, 1, 0x38BDF8);
+                        canvas.draw_text_scaled_clipped_font(vx + 16, ry, vw - 32, &row.text, 0x38BDF8, FontFace::UiBold, large_text);
+                        let lw = font::measure_text_scaled(FontFace::UiBold, &row.text, large_text).min(vw - 32);
+                        canvas.fill_rect(vx + 16, ry + row_h - 4, lw, 1, 0x38BDF8);
                     }
                     RowStyle::Divider => {
-                        canvas.fill_rect(vx + 14, ry + 10, vw - 28, 1, theme.border_inactive);
+                        canvas.fill_rect(vx + 14, ry + row_h / 2, vw - 28, 1, theme.border_inactive);
                     }
                     RowStyle::Blank => {}
                 }
-                ry += ROW_H;
+                ry += row_h;
             }
         }
 
